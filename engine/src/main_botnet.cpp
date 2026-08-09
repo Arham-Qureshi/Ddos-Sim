@@ -66,7 +66,7 @@ bool parse_args(int argc, char* argv[], Options& opts) {
             const char* v = value("--port");
             if (!v) return false;
             unsigned long parsed = 0;
-            if (!parse_ulong(v, &parsed)) {
+            if (!parse_ulong(v, &parsed) || parsed > 65535) {
                 std::fprintf(stderr, "--port must be a positive integer\n");
                 return false;
             }
@@ -84,7 +84,7 @@ bool parse_args(int argc, char* argv[], Options& opts) {
             const char* v = value("--rps");
             if (!v) return false;
             unsigned long parsed = 0;
-            if (!parse_ulong(v, &parsed)) {
+            if (!parse_ulong(v, &parsed) || parsed > 1000000) {
                 std::fprintf(stderr, "--rps must be a positive integer\n");
                 return false;
             }
