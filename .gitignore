@@ -1,0 +1,8 @@
+build/
+.agents/
+.opencode/
+docs/
+opencode.json
+skills-lock.json
+codebase-out/
+.agentignore
