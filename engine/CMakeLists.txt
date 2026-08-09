@@ -22,3 +22,10 @@ target_include_directories(ddos_server PRIVATE
 
 target_compile_options(ddos_server PRIVATE -O3 -pthread -Wall -Wextra)
 target_link_libraries(ddos_server PRIVATE pthread)
+
+add_executable(ddos_botnet
+    src/main_botnet.cpp
+)
+
+target_compile_options(ddos_botnet PRIVATE -O3 -pthread -Wall -Wextra)
+target_link_libraries(ddos_botnet PRIVATE pthread)
