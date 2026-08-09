@@ -4,6 +4,7 @@
 #include <unistd.h>
 
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <csignal>
 #include <cstdio>
@@ -15,6 +16,20 @@
 #include <vector>
 
 namespace {
+
+bool parse_ulong(const char* s, unsigned long* out) {
+    if (s == nullptr || *s == '\0' || *s == '-') {
+        return false;
+    }
+    errno = 0;
+    char* end = nullptr;
+    unsigned long v = std::strtoul(s, &end, 10);
+    if (errno == ERANGE || end == s || *end != '\0') {
+        return false;
+    }
+    *out = v;
+    return true;
+}
 
 std::atomic<bool> g_stop{false};
 
@@ -50,19 +65,39 @@ bool parse_args(int argc, char* argv[], Options& opts) {
         if (arg == "--port") {
             const char* v = value("--port");
             if (!v) return false;
-            opts.port = static_cast<uint16_t>(std::atoi(v));
+            unsigned long parsed = 0;
+            if (!parse_ulong(v, &parsed)) {
+                std::fprintf(stderr, "--port must be a positive integer\n");
+                return false;
+            }
+            opts.port = static_cast<uint16_t>(parsed);
         } else if (arg == "--threads") {
             const char* v = value("--threads");
             if (!v) return false;
-            opts.threads = static_cast<size_t>(std::atoi(v));
+            unsigned long parsed = 0;
+            if (!parse_ulong(v, &parsed)) {
+                std::fprintf(stderr, "--threads must be a positive integer\n");
+                return false;
+            }
+            opts.threads = static_cast<size_t>(parsed);
         } else if (arg == "--rps") {
             const char* v = value("--rps");
             if (!v) return false;
-            opts.rps = static_cast<size_t>(std::atoi(v));
+            unsigned long parsed = 0;
+            if (!parse_ulong(v, &parsed)) {
+                std::fprintf(stderr, "--rps must be a positive integer\n");
+                return false;
+            }
+            opts.rps = static_cast<size_t>(parsed);
         } else if (arg == "--duration") {
             const char* v = value("--duration");
             if (!v) return false;
-            opts.duration_secs = static_cast<size_t>(std::atoi(v));
+            unsigned long parsed = 0;
+            if (!parse_ulong(v, &parsed)) {
+                std::fprintf(stderr, "--duration must be a positive integer\n");
+                return false;
+            }
+            opts.duration_secs = static_cast<size_t>(parsed);
         } else {
             std::fprintf(stderr, "unknown flag: %s\n", arg.c_str());
             return false;
