@@ -11,9 +11,11 @@
 #include <thread>
 #include <vector>
 
+class RateLimiter;
+
 class ThreadPool {
 public:
-    explicit ThreadPool(size_t worker_count, TelemetryStats* stats);
+    explicit ThreadPool(size_t worker_count, TelemetryStats* stats, RateLimiter* rate_limiter);
     ~ThreadPool();
 
     ThreadPool(const ThreadPool&) = delete;
@@ -31,11 +33,12 @@ private:
     std::condition_variable cv_;
     std::atomic<bool> stopping_{false};
     TelemetryStats* stats_ = nullptr;
+    RateLimiter* rate_limiter_ = nullptr;
 };
 
 class EpollServer {
 public:
-    EpollServer(uint16_t port, size_t worker_count, TelemetryStats* stats);
+    EpollServer(uint16_t port, size_t worker_count, TelemetryStats* stats, RateLimiter* rate_limiter);
     ~EpollServer();
 
     EpollServer(const EpollServer&) = delete;
