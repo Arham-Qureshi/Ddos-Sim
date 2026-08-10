@@ -1,5 +1,6 @@
 build/
 .worktrees/
+read/
 .agents/
 .opencode/
 docs/
