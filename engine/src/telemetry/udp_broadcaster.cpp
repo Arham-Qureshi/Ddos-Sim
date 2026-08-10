@@ -1,6 +1,7 @@
 #include "telemetry.hpp"
 
 #include "nlohmann/json.hpp"
+#include "rate_limiter.hpp"
 
 #include <arpa/inet.h>
 #include <chrono>
@@ -36,8 +37,9 @@ uint64_t process_cpu_ticks() {
 
 }  // namespace
 
-TelemetryBroadcaster::TelemetryBroadcaster(uint16_t port, TelemetryStats& stats)
-    : port_(port), stats_(stats) {}
+TelemetryBroadcaster::TelemetryBroadcaster(uint16_t port, TelemetryStats& stats,
+                                           RateLimiter* rate_limiter)
+    : port_(port), stats_(stats), rate_limiter_(rate_limiter) {}
 
 TelemetryBroadcaster::~TelemetryBroadcaster() {
     stop();
@@ -54,7 +56,9 @@ void TelemetryBroadcaster::start() {
     dest_.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     dest_.sin_port = htons(port_);
 
-    last_total_accepted_ = stats_.total_accepted.load(std::memory_order_relaxed);
+    last_normal_accepted_ = stats_.normal_accepted.load(std::memory_order_relaxed);
+    last_attack_accepted_ = stats_.attack_accepted.load(std::memory_order_relaxed);
+    last_blocked_accepted_ = stats_.blocked_accepted.load(std::memory_order_relaxed);
     last_cpu_ticks_ = process_cpu_ticks();
     last_cpu_wall_ms_ = now_ms();
 
@@ -77,10 +81,18 @@ void TelemetryBroadcaster::run_loop() {
     while (running_.load(std::memory_order_relaxed)) {
         auto tick_start = std::chrono::steady_clock::now();
 
-        uint64_t accepted = stats_.total_accepted.load(std::memory_order_relaxed);
-        uint64_t delta = accepted - last_total_accepted_;
-        last_total_accepted_ = accepted;
-        stats_.normal_rps.store(delta * 2, std::memory_order_relaxed);
+        auto snap = [](const std::atomic<uint64_t>& counter, uint64_t& last) {
+            uint64_t value = counter.load(std::memory_order_relaxed);
+            uint64_t delta = value - last;
+            last = value;
+            return delta;
+        };
+        stats_.normal_rps.store(snap(stats_.normal_accepted, last_normal_accepted_) * 2,
+                                std::memory_order_relaxed);
+        stats_.attack_rps.store(snap(stats_.attack_accepted, last_attack_accepted_) * 2,
+                                std::memory_order_relaxed);
+        stats_.blocked_rps.store(snap(stats_.blocked_accepted, last_blocked_accepted_) * 2,
+                                 std::memory_order_relaxed);
 
 uint64_t wall_now = now_ms();
         uint64_t wall_delta = wall_now - last_cpu_wall_ms_;
@@ -100,6 +112,13 @@ uint64_t wall_now = now_ms();
         }
         stats_.cpu_load_pct.store(pct, std::memory_order_relaxed);
 
+        nlohmann::json blocks = nlohmann::json::array();
+        if (rate_limiter_) {
+            for (const RecentBlock& b : rate_limiter_->recent_blocks()) {
+                blocks.push_back({{"vip", b.vip}, {"unblock_ts", b.unblock_ts}});
+            }
+        }
+
         nlohmann::json payload = {
             {"timestamp",
              std::chrono::duration_cast<std::chrono::seconds>(
@@ -111,7 +130,7 @@ uint64_t wall_now = now_ms();
                          {"cpu_load_pct", pct},
                          {"active_connections",
                           stats_.active_connections.load(std::memory_order_relaxed)}}},
-            {"recent_blocks", nlohmann::json::array()}};
+            {"recent_blocks", blocks}};
 
         std::string json_str = payload.dump();
         sendto(sock_fd_, json_str.data(), json_str.size(), 0,

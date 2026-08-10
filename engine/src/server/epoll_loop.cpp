@@ -13,8 +13,9 @@
 #include <cstring>
 #include <string>
 
-EpollServer::EpollServer(uint16_t port, size_t worker_count, TelemetryStats* stats)
-    : port_(port), stats_(stats), pool_(worker_count, stats) {}
+EpollServer::EpollServer(uint16_t port, size_t worker_count, TelemetryStats* stats,
+                         RateLimiter* rate_limiter)
+    : port_(port), stats_(stats), pool_(worker_count, stats, rate_limiter) {}
 
 EpollServer::~EpollServer() {
     if (epoll_fd_ >= 0) {
@@ -87,6 +88,11 @@ void EpollServer::accept_connections() {
                 break;
             }
             if (errno == EINTR) {
+                continue;
+            }
+            if (errno == EMFILE || errno == ENFILE) {
+                // fd table full (e.g. backlog burst): back off briefly and retry
+                usleep(10000);
                 continue;
             }
             perror("accept4");

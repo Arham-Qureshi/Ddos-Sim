@@ -1,3 +1,4 @@
+#include "rate_limiter.hpp"
 #include "server.hpp"
 
 #include <poll.h>
@@ -6,9 +7,94 @@
 
 #include <cerrno>
 #include <cstdio>
+#include <string>
 
-ThreadPool::ThreadPool(size_t worker_count, TelemetryStats* stats)
-    : stats_(stats) {
+namespace {
+
+constexpr size_t kMaxVipLine = 256;
+constexpr int kPollTimeoutMs = 200;
+constexpr const char* kAdminIp = "127.0.0.1";
+
+// Read until '\n' (max kMaxVipLine bytes). Non-blocking + poll-backed,
+// mirroring the worker's drain loop.
+// Returns the line without the trailing '\n', or "" on:
+// pure EOF, clear error, poll timeout, or > kMaxVipLine bytes without '\n'.
+std::string read_first_line(int fd) {
+    std::string line;
+    line.reserve(32);
+    for (;;) {
+        char c = 0;
+        ssize_t n = recv(fd, &c, 1, 0);
+        if (n == 1) {
+            if (c == '\n') {
+                if (!line.empty() && line.back() == '\r') {
+                    line.pop_back();  // tolerate CRLF
+                }
+                return line;
+            }
+            line.push_back(c);
+            if (line.size() >= kMaxVipLine) {
+                return "";  // no newline seen in time
+            }
+            continue;
+        }
+        if (n == 0) {
+            return "";  // peer closed before sending a line
+        }
+        if (errno == EINTR) {
+            continue;
+        }
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            pollfd pfd{fd, POLLIN, 0};
+            int r = poll(&pfd, 1, kPollTimeoutMs);
+            if (r == 0 || r < 0) {
+                return "";  // timeout or poll error
+            }
+            continue;
+        }
+        return "";
+    }
+}
+
+bool valid_ipv4(const std::string& s) {
+    int octet = -1;
+    int dots = 0;
+    for (char ch : s) {
+        if (ch == '.') {
+            if (octet < 0 || octet > 255) {
+                return false;
+            }
+            octet = -1;
+            ++dots;
+        } else if (ch >= '0' && ch <= '9') {
+            if (octet < 0) {
+                octet = 0;
+            }
+            octet = octet * 10 + (ch - '0');
+            if (octet > 255) {
+                return false;
+            }
+        } else {
+            return false;
+        }
+    }
+    return octet >= 0 && octet <= 255 && dots == 3;
+}
+
+// Returns the virtual IP if the line is a valid "VIP:x.x.x.x", else "".
+std::string parse_vip(const std::string& line) {
+    constexpr const char* kPrefix = "VIP:";
+    if (line.compare(0, 4, kPrefix) != 0) {
+        return "";
+    }
+    std::string ip = line.substr(4);
+    return valid_ipv4(ip) ? ip : "";
+}
+
+}  // namespace
+
+ThreadPool::ThreadPool(size_t worker_count, TelemetryStats* stats, RateLimiter* rate_limiter)
+    : stats_(stats), rate_limiter_(rate_limiter) {
     workers_.reserve(worker_count);
     for (size_t i = 0; i < worker_count; ++i) {
         workers_.emplace_back([this] { worker_main(); });
@@ -39,6 +125,22 @@ void ThreadPool::worker_main() {
                 stats_->active_connections.fetch_sub(1, std::memory_order_relaxed);
             }
         };
+
+        if (rate_limiter_) {
+            std::string line = read_first_line(client_fd);
+            std::string vip = parse_vip(line);
+            if (!vip.empty() && vip != kAdminIp && !rate_limiter_->allow(vip)) {
+                if (stats_) {
+                    stats_->attack_accepted.fetch_add(1, std::memory_order_relaxed);
+                    stats_->blocked_accepted.fetch_add(1, std::memory_order_relaxed);
+                }
+                finish(client_fd);
+                continue;
+            }
+        }
+        if (stats_) {
+            stats_->normal_accepted.fetch_add(1, std::memory_order_relaxed);
+        }
         for (;;) {
             if (stopping_.load(std::memory_order_relaxed)) {
                 finish(client_fd);
@@ -50,17 +152,17 @@ void ThreadPool::worker_main() {
             }
             if (n == 0) {
                 finish(client_fd);
-                return;
+                break;  // done with this connection, back to the queue
             }
             if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
                 finish(client_fd);
-                return;
+                break;  // one bad connection must not kill the worker
             }
             pollfd pfd{client_fd, POLLIN, 0};
             int r = poll(&pfd, 1, 200);
             if (r < 0 && errno != EINTR) {
                 finish(client_fd);
-                return;
+                break;  // one bad connection must not kill the worker
             }
         }
     }
