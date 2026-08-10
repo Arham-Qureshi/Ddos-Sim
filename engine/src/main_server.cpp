@@ -1,5 +1,6 @@
 #include "nlohmann/json.hpp"
 
+#include "rate_limiter.hpp"
 #include "server.hpp"
 #include "telemetry.hpp"
 
@@ -23,6 +24,10 @@ struct ServerConfig {
     uint16_t port = 8080;
     uint16_t telemetry_udp_port = 9090;
     size_t worker_threads = 4;
+    uint32_t rate_limit_max_rps = 20;
+    uint32_t rate_limit_block_seconds = 10;
+    RateLimiterConfig::Algorithm rate_limit_algorithm =
+        RateLimiterConfig::Algorithm::kTokenBucket;
 };
 
 ServerConfig load_config(const std::string& path) {
@@ -40,6 +45,20 @@ ServerConfig load_config(const std::string& path) {
         cfg.port = j.value("target_server_port", cfg.port);
         cfg.telemetry_udp_port = j.value("telemetry_udp_port", cfg.telemetry_udp_port);
         cfg.worker_threads = j.value("worker_threads", cfg.worker_threads);
+        cfg.rate_limit_max_rps = j.value("rate_limit_max_rps", cfg.rate_limit_max_rps);
+        cfg.rate_limit_block_seconds =
+            j.value("rate_limit_block_seconds", cfg.rate_limit_block_seconds);
+        std::string algo = j.value("rate_limit_algorithm", std::string("token_bucket"));
+        if (algo == "sliding_window") {
+            cfg.rate_limit_algorithm = RateLimiterConfig::Algorithm::kSlidingWindow;
+        } else if (algo != "token_bucket") {
+            std::cerr << "Warning: unknown rate_limit_algorithm '" << algo
+                      << "', using token_bucket\n";
+        }
+        if (cfg.rate_limit_max_rps == 0) {
+            std::cerr << "Warning: rate_limit_max_rps must be >= 1, using 20\n";
+            cfg.rate_limit_max_rps = 20;
+        }
     } catch (const std::exception& e) {
         std::cerr << "Warning: failed to parse " << path << " (" << e.what()
                   << "), using defaults\n";
@@ -57,10 +76,23 @@ int main(int argc, char* argv[]) {
 
     ServerConfig cfg = load_config(config_path);
     std::cout << "ddos-server starting (config: " << config_path << ")\n";
+    std::cout
+        << "mitigation: "
+        << (cfg.rate_limit_algorithm == RateLimiterConfig::Algorithm::kSlidingWindow
+                ? "sliding_window"
+                : "token_bucket")
+        << ", max " << cfg.rate_limit_max_rps << " rps, ban "
+        << cfg.rate_limit_block_seconds << "s\n";
 
     TelemetryStats stats;
-    EpollServer server(cfg.port, cfg.worker_threads, &stats);
-    TelemetryBroadcaster telemetry(cfg.telemetry_udp_port, stats);
+    RateLimiterConfig limiter_cfg;
+    limiter_cfg.max_rps = cfg.rate_limit_max_rps;
+    limiter_cfg.block_seconds = cfg.rate_limit_block_seconds;
+    limiter_cfg.algorithm = cfg.rate_limit_algorithm;
+    RateLimiter limiter(limiter_cfg);
+
+    EpollServer server(cfg.port, cfg.worker_threads, &stats, &limiter);
+    TelemetryBroadcaster telemetry(cfg.telemetry_udp_port, stats, &limiter);
     g_server = &server;
 
     struct sigaction sa {};
