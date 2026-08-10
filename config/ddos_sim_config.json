@@ -3,7 +3,7 @@
   "telemetry_udp_port": 9090,
   "dashboard_ui_port": 8000,
   "worker_threads": 4,
-  "rate_limit_max_rps": 2,
+  "rate_limit_max_rps": 20,
   "rate_limit_block_seconds": 10,
   "rate_limit_algorithm": "token_bucket"
 }
