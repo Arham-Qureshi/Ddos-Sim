@@ -65,3 +65,44 @@ def test_bind_failure_sets_listener_down():
         assert state.listener_up is False
 
     asyncio.run(scenario())
+
+
+def test_recent_blocks_populate_ledger():
+    def payload(ts, blocks):
+        return json.dumps({"timestamp": ts, "metrics": {
+            "normal_rps": 1, "attack_rps": 0, "blocked_rps": 0,
+            "cpu_load_pct": 0, "active_connections": 1},
+            "recent_blocks": blocks}).encode()
+
+    async def wait_for(predicate, timeout_s=1.0):
+        elapsed = 0.0
+        while elapsed < timeout_s:
+            if predicate():
+                return
+            await asyncio.sleep(0.01)
+            elapsed += 0.01
+        raise AssertionError("timed out waiting for condition")
+
+    async def scenario():
+        state = AppState(Settings())
+        port = _free_udp_port()
+        task = asyncio.create_task(run_udp_listener(state, Settings(udp_port=port)))
+        await asyncio.sleep(0.05)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.sendto(payload(1, [{"vip": "10.0.0.1", "unblock_ts": 100},
+                               {"vip": "10.0.0.2", "unblock_ts": 200}]),
+                    ("127.0.0.1", port))
+        await wait_for(lambda: len(state.recent_blocks_snapshot()) >= 2)
+        sock.sendto(payload(2, [{"vip": "10.0.0.3", "unblock_ts": 300}]),
+                    ("127.0.0.1", port))
+        await wait_for(lambda: len(state.recent_blocks_snapshot()) >= 3)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        return state
+
+    state = asyncio.run(scenario())
+    ledger = state.recent_blocks_snapshot()
+    vips = {b.vip for b in ledger}
+    assert vips == {"10.0.0.1", "10.0.0.2", "10.0.0.3"}
+    assert {b.unblock_ts for b in ledger} == {100, 200, 300}

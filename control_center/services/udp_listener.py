@@ -32,6 +32,9 @@ class _Protocol(asyncio.DatagramProtocol):
             asyncio.create_task(self.state.record_dropped())
         else:
             asyncio.create_task(self.state.update(frame))
+            if frame.recent_blocks:
+                asyncio.create_task(self.state.record_blocks(
+                    [b.model_dump() for b in frame.recent_blocks]))
 
 
 async def run_udp_listener(state: AppState, settings: Settings) -> None:
