@@ -1,13 +1,21 @@
+import socket
 import time
 
 from fastapi.testclient import TestClient
 
+from app.config import Settings
 from app.main import create_app
 from app.schemas import Metrics, TelemetryFrame
 
 
+def _free_udp_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
 def client():
-    return TestClient(create_app())
+    return TestClient(create_app(Settings(udp_port=_free_udp_port())))
 
 
 def test_health_engine_lost_without_data():
@@ -20,7 +28,7 @@ def test_health_engine_lost_without_data():
 
 
 async def test_health_connected_after_frame():
-    app = create_app()
+    app = create_app(Settings(udp_port=_free_udp_port()))
     await app.state.state.update(
         TelemetryFrame(timestamp=1, metrics=Metrics(normal_rps=2)),
         now=time.monotonic(),
