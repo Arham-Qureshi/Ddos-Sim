@@ -39,3 +39,7 @@ class TelemetryResponse(BaseModel):
     latest: TelemetryFrame | None = None
     history: list[TelemetryFrame] = []
     history_len: int = 0
+
+class BlocksResponse(BaseModel):
+    engine_connected: bool
+    recent: list[BlockRecord] = []
