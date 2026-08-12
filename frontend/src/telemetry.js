@@ -36,6 +36,12 @@ export function seedSeries(history = []) {
   return { normal, attack, blocked };
 }
 
+// shape one series buffer into echarts [timeMs, value] points (null-safe)
+export function chartData(series, key) {
+  const buf = series?.[key];
+  return buf ? buf.toArray().map((p) => [p.ts * 1000, p.value]) : [];
+}
+
 // ingest one live ws frame into the buffers
 export function ingestFrame(frame, series) {
   series.normal.push({ ts: frame.ts, value: frame.normal_rps ?? 0 });
