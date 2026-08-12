@@ -8,3 +8,5 @@ opencode.json
 skills-lock.json
 codebase-out/
 .agentignore
+AGENTS.md
+node_modules/
