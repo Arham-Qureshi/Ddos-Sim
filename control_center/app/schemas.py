@@ -1,5 +1,7 @@
 from __future__ import annotations
-from pydantic import BaseModel, ConfigDict
+import ipaddress
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 class Metrics(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -53,3 +55,37 @@ class WsFrame(BaseModel):
 class BlocksResponse(BaseModel):
     engine_connected: bool
     recent: list[BlockRecord] = []
+
+class AttackRequest(BaseModel):
+    rps: int = Field(default=200, ge=10, le=1000)
+    threads: int = Field(default=4, ge=1, le=64)
+    duration: int = Field(default=10, ge=1, le=300)
+
+class MitigationRequest(BaseModel):
+    enabled: bool
+
+class VipBanRequest(BaseModel):
+    vip: str
+
+    @field_validator("vip")
+    @classmethod
+    def public_ipv4(cls, v: str) -> str:
+        clean = v.strip()
+        try:
+            addr = ipaddress.ip_address(clean)
+        except ValueError:
+            raise ValueError("not a valid IP address")
+        if addr.version != 4 or addr.is_loopback:
+            raise ValueError("must be a non-loopback IPv4 address")
+        return str(addr)
+
+class ControlResponse(BaseModel):
+    ok: bool
+    reply: str
+    engine_reachable: bool = True
+
+class ControlStatus(BaseModel):
+    mitigation_on: bool = True
+    attack_running: bool = False
+    pid: int = 0
+    engine_reachable: bool = True
