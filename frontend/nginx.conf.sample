@@ -1,0 +1,27 @@
+# Sample nginx for the Watchtower dashboard (Ticket 6).
+# Delivers / + /ws from port 8081, proxying API/WS to the FastAPI command
+# center on 8000. For local dev you can skip nginx and run:
+#   python -m http.server 8081          (in ./frontend)
+#   uvicorn app.main:create_app --factory --port 8000   (in ./control_center)
+
+server {
+    listen 8081;
+    server_name localhost;
+
+    root /home/arham/PROJECT/DDOS/frontend;
+    index index.html;
+
+    # static frontend assets
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # command center API + websocket live telemetry
+    location /api/ {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+    }
+}
