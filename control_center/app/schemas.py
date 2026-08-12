@@ -40,6 +40,16 @@ class TelemetryResponse(BaseModel):
     history: list[TelemetryFrame] = []
     history_len: int = 0
 
+class WsFrame(BaseModel):
+    """chart-shaped frame pushed over the websocket every 0.5s"""
+    ts: float
+    normal_rps: float
+    attack_rps: float
+    blocked_rps: float
+    cpu_load_pct: float
+    active_connections: int
+    blocks: list[BlockRecord] = []
+
 class BlocksResponse(BaseModel):
     engine_connected: bool
     recent: list[BlockRecord] = []
