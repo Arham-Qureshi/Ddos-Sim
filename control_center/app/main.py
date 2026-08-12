@@ -4,6 +4,7 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from api import api_router
 from app.config import Settings, load_settings
@@ -31,6 +32,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 pass
 
     app = FastAPI(title="DDOS Sim Command Center", version="0.1.0", lifespan=lifespan)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     app.state.state = state
     app.state.settings = settings
     app.include_router(api_router)
