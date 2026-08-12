@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { RingBuffer, seedSeries, ingestFrame } from "../src/telemetry.js";
+import { RingBuffer, seedSeries, ingestFrame, chartData } from "../src/telemetry.js";
 
 describe("RingBuffer", () => {
   it("append keeps newest points", () => {
@@ -44,6 +44,26 @@ describe("seedSeries", () => {
   it("tolerates missing metrics", () => {
     const s = seedSeries([{ timestamp: 7 }]);
     expect(s.normal.toArray()).toEqual([{ ts: 7, value: 0 }]);
+  });
+});
+
+describe("chartData", () => {
+  it("returns [] when series is missing (boot-safe)", () => {
+    expect(chartData(null, "normal")).toEqual([]);
+  });
+
+  it("returns [] for an unknown key", () => {
+    expect(chartData({ normal: new RingBuffer() }, "attack")).toEqual([]);
+  });
+
+  it("maps buffer points to [ms, value] pairs for echarts", () => {
+    const buf = new RingBuffer();
+    buf.push({ ts: 1, value: 10 });
+    buf.push({ ts: 2, value: 20 });
+    expect(chartData({ attack: buf }, "attack")).toEqual([
+      [1000, 10],
+      [2000, 20],
+    ]);
   });
 });
 
