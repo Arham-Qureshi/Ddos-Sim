@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <fcntl.h>
 #include <fstream>
 #include <string>
 #include <unistd.h>
@@ -51,6 +52,8 @@ void TelemetryBroadcaster::start() {
         perror("telemetry socket");
         return;
     }
+    int flags = fcntl(sock_fd_, F_GETFD, 0);
+    fcntl(sock_fd_, F_SETFD, flags | FD_CLOEXEC);  // don't leak into exec'd botnet
 
     dest_.sin_family = AF_INET;
     dest_.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
