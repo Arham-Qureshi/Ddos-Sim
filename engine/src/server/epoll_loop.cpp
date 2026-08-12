@@ -33,6 +33,13 @@ bool EpollServer::init_socket() {
         return false;
     }
 
+    // never leak the listen socket into an exec'd child (e.g. the botnet)
+    int fd_flags = fcntl(listen_fd_, F_GETFD, 0);
+    if (fd_flags < 0 || fcntl(listen_fd_, F_SETFD, fd_flags | FD_CLOEXEC) < 0) {
+        perror("fcntl FD_CLOEXEC");
+        return false;
+    }
+
     int opt = 1;
     if (setsockopt(listen_fd_, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
         perror("setsockopt");
