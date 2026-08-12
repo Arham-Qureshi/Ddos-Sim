@@ -1,0 +1,14 @@
+{
+  "name": "watchtower-dashboard",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "dev": "python3 -m http.server 8081"
+  },
+  "devDependencies": {
+    "jsdom": "^24.1.0",
+    "vitest": "^2.1.0"
+  }
+}
