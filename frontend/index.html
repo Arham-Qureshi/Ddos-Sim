@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WATCHTOWER — DDoS Sim Console</title>
+  <link rel="stylesheet" href="vendor/tailwind.min.css" />
+  <style>
+    :root {
+      --bg: #0a0e14;
+      --panel: #0f1520;
+      --panel-2: #131b29;
+      --line: rgba(148, 163, 184, 0.12);
+      --muted: #7c8aa0;
+      --txt: #cbd5e1;
+      --normal: #38bdf8;
+      --attack: #f59e0b;
+      --blocked: #fb7185;
+    }
+    html, body { height: 100%; }
+    body {
+      background: var(--bg);
+      color: var(--txt);
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; }
+    .panel { background: var(--panel); border: 1px solid var(--line); }
+    .btn-focus:focus-visible { outline: 2px solid var(--attack); outline-offset: 2px; }
+    .flash-row { animation: rowflash 0.9s ease-out; }
+    @keyframes rowflash { 0% { background: rgba(245, 158, 11, 0.28); } 100% { background: transparent; } }
+    .pulse-dot { animation: pulsedot 1.6s ease-in-out infinite; }
+    @keyframes pulsedot { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+    .toast { transition: opacity 0.25s ease, transform 0.25s ease; }
+    .toast.hide { opacity: 0; transform: translateY(4px); }
+  </style>
+</head>
+<body class="min-h-full">
+  <div class="mx-auto max-w-7xl px-4 py-5 lg:px-6">
+    <!-- header -->
+    <header class="flex flex-wrap items-center gap-4">
+      <div class="flex items-center gap-3">
+        <div id="status-dot" class="h-3 w-3 rounded-full bg-slate-600 pulse-dot" aria-hidden="true"></div>
+        <span id="status-text" class="mono text-sm uppercase tracking-widest text-slate-500" role="status" aria-live="polite">connecting</span>
+      </div>
+      <div class="flex-1 text-center">
+        <h1 class="mono text-lg font-bold uppercase tracking-[0.3em] text-slate-200">Watchtower</h1>
+        <p class="text-xs text-slate-500">DDoS attack &amp; prevention simulator — live telemetry</p>
+      </div>
+      <button id="launch-attack"
+              class="btn-focus mono rounded-md border border-red-900/60 bg-red-950/40 px-5 py-2 text-sm font-semibold uppercase tracking-widest text-red-400 transition-colors hover:border-red-600 hover:bg-red-900/40 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-red-900/60 disabled:hover:bg-red-950/40"
+              title="Signals an attack run. Engine IPC arrives in Ticket 7.">
+        Launch Attack
+      </button>
+    </header>
+
+    <!-- main chart -->
+    <section class="panel mt-5 rounded-lg p-4">
+      <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <h2 class="mono text-sm font-semibold uppercase tracking-widest text-slate-300">Live Traffic</h2>
+        <div class="flex gap-4 text-xs">
+          <span class="flex items-center gap-1.5"><span class="h-2 w-2 rounded-full" style="background:var(--normal)"></span>normal</span>
+          <span class="flex items-center gap-1.5"><span class="h-2 w-2 rounded-full" style="background:var(--attack)"></span>attack</span>
+          <span class="flex items-center gap-1.5"><span class="h-2 w-2 rounded-full" style="background:var(--blocked)"></span>blocked</span>
+        </div>
+      </div>
+      <div id="traffic-chart" class="h-[340px] w-full"></div>
+    </section>
+
+    <!-- metrics + security log -->
+    <section class="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-3">
+      <div class="grid grid-cols-2 gap-4 lg:col-span-1">
+        <div class="panel rounded-lg p-4">
+          <p class="text-xs uppercase tracking-widest text-slate-500">Active conns</p>
+          <p id="metric-conns" class="mono mt-1 text-2xl text-slate-100">0</p>
+        </div>
+        <div class="panel rounded-lg p-4">
+          <p class="text-xs uppercase tracking-widest text-slate-500">CPU load</p>
+          <p id="metric-cpu" class="mono mt-1 text-2xl text-slate-100">0%</p>
+        </div>
+        <div class="panel rounded-lg p-4">
+          <p class="text-xs uppercase tracking-widest text-slate-500">Blocked rps</p>
+          <p id="metric-blocked" class="mono mt-1 text-2xl" style="color:var(--blocked)">0</p>
+        </div>
+        <div class="panel rounded-lg p-4">
+          <p class="text-xs uppercase tracking-widest text-slate-500">Last frame</p>
+          <p id="metric-last" class="mono mt-1 text-2xl text-slate-100">—</p>
+        </div>
+      </div>
+
+      <div class="panel rounded-lg lg:col-span-2">
+        <h2 class="mono border-b border-slate-800 px-4 py-3 text-sm font-semibold uppercase tracking-widest text-slate-300">Security Log</h2>
+        <div class="max-h-[280px] overflow-y-auto">
+          <table class="w-full text-sm">
+            <thead class="sticky top-0 bg-[#0f1520] text-left text-xs uppercase tracking-widest text-slate-500">
+              <tr>
+                <th class="px-4 py-2 font-semibold">vip</th>
+                <th class="px-4 py-2 font-semibold">status</th>
+                <th class="px-4 py-2 text-right font-semibold">ban clock (mono ms)</th>
+              </tr>
+            </thead>
+            <tbody id="security-log" class="mono divide-y divide-slate-800/60"></tbody>
+          </table>
+          <p id="log-empty" class="mono px-4 py-6 text-center text-xs text-slate-600">no VIPs blocked yet</p>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div id="toast" class="toast mono pointer-events-none fixed bottom-5 right-5 hidden rounded-md border border-slate-700 bg-[#131b29] px-4 py-2 text-xs uppercase tracking-widest text-slate-200"></div>
+
+  <script src="vendor/echarts.min.js"></script>
+  <script type="module" src="src/dashboard.js"></script>
+</body>
+</html>
