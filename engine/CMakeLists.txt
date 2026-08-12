@@ -10,6 +10,7 @@ endif()
 
 add_executable(ddos_server
     src/main_server.cpp
+    src/server/control_server.cpp
     src/server/epoll_loop.cpp
     src/server/rate_limiter.cpp
     src/server/thread_pool.cpp

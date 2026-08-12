@@ -9,6 +9,8 @@ from app.schemas import BlockRecord, TelemetryFrame
 
 logger = logging.getLogger(__name__)
 
+ATTACK_COOLDOWN_S = 5.0
+
 
 class AppState:
     def __init__(self, settings: Settings) -> None:
@@ -21,6 +23,7 @@ class AppState:
         self.listener_up = True
         self.started_at = time.monotonic()
         self._last_rx: float | None = None
+        self._last_attack_at = 0.0
 
     async def update(self, frame: TelemetryFrame, now: float | None = None) -> None:
         now = now if now is not None else time.monotonic()
@@ -64,3 +67,15 @@ class AppState:
 
     def recent_blocks_snapshot(self) -> list[BlockRecord]:
         return list(self._blocks.values())
+
+    async def cooldown_remaining(self, now: float | None = None) -> float:
+        now = now if now is not None else time.monotonic()
+        async with self._lock:
+            if self._last_attack_at == 0:
+                return 0.0
+            return max(0.0, self._last_attack_at + ATTACK_COOLDOWN_S - now)
+
+    async def note_attack_started(self, now: float | None = None) -> None:
+        now = now if now is not None else time.monotonic()
+        async with self._lock:
+            self._last_attack_at = now

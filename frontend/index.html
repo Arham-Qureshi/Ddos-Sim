@@ -30,6 +30,16 @@
     @keyframes rowflash { 0% { background: rgba(245, 158, 11, 0.28); } 100% { background: transparent; } }
     .pulse-dot { animation: pulsedot 1.6s ease-in-out infinite; }
     @keyframes pulsedot { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+    /* hand-added utilities the vendored tailwind v2 build can't JIT
+       (arbitrary values below are otherwise silently dropped -> e.g. the
+       chart div ends up 0px tall and echarts draws nothing) */
+    .tracking-\[0\.3em\] { letter-spacing: 0.3em; }
+    .h-\[340px\] { height: 340px; }
+    .max-h-\[280px\] { max-height: 280px; }
+    .text-\[10px\] { font-size: 10px; }
+    .bg-\[\#0a0e14\] { background-color: #0a0e14; }
+    .bg-\[\#0f1520\] { background-color: #0f1520; }
+    .bg-\[\#131b29\] { background-color: #131b29; }
     .toast { transition: opacity 0.25s ease, transform 0.25s ease; }
     .toast.hide { opacity: 0; transform: translateY(4px); }
   </style>
@@ -46,11 +56,23 @@
         <h1 class="mono text-lg font-bold uppercase tracking-[0.3em] text-slate-200">Watchtower</h1>
         <p class="text-xs text-slate-500">DDoS attack &amp; prevention simulator — live telemetry</p>
       </div>
-      <button id="launch-attack"
-              class="btn-focus mono rounded-md border border-red-900/60 bg-red-950/40 px-5 py-2 text-sm font-semibold uppercase tracking-widest text-red-400 transition-colors hover:border-red-600 hover:bg-red-900/40 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-red-900/60 disabled:hover:bg-red-950/40"
-              title="Signals an attack run. Engine IPC arrives in Ticket 7.">
-        Launch Attack
-      </button>
+      <div class="flex items-center gap-2">
+        <button id="mitigation-toggle"
+                class="btn-focus mono rounded-md border border-slate-700 bg-slate-800/40 px-4 py-2 text-sm font-semibold uppercase tracking-widest text-slate-300 transition-colors hover:border-slate-500 disabled:cursor-not-allowed disabled:opacity-40"
+                title="Toggle the C++ rate-limiter on or off">
+          Mitigation: On
+        </button>
+        <button id="stop-attack"
+                class="btn-focus mono rounded-md border border-rose-800/60 bg-rose-950/40 px-4 py-2 text-sm font-semibold uppercase tracking-widest text-rose-400 transition-colors hover:border-rose-600 disabled:cursor-not-allowed disabled:opacity-40"
+                title="Stop the running virtual botnet">
+          Stop Attack
+        </button>
+        <button id="launch-attack"
+                class="btn-focus mono rounded-md border border-red-900/60 bg-red-950/40 px-5 py-2 text-sm font-semibold uppercase tracking-widest text-red-400 transition-colors hover:border-red-600 hover:bg-red-900/40 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-red-900/60 disabled:hover:bg-red-950/40"
+                title="Spawn a virtual botnet burst through the C++ control socket">
+          Launch Attack
+        </button>
+      </div>
     </header>
 
     <!-- main chart -->
@@ -89,6 +111,17 @@
 
       <div class="panel rounded-lg lg:col-span-2">
         <h2 class="mono border-b border-slate-800 px-4 py-3 text-sm font-semibold uppercase tracking-widest text-slate-300">Security Log</h2>
+        <div class="flex items-center gap-2 border-b border-slate-800 px-4 py-2">
+          <span class="text-xs uppercase tracking-widest text-slate-500">VIP director</span>
+          <input id="vip-input" type="text" inputmode="numeric" maxlength="15" pattern="[0-9.]*"
+                 placeholder="e.g. 10.0.0.99"
+                 class="mono w-40 rounded border border-slate-700 bg-[#0a0e14] px-2 py-1 text-xs text-slate-200 placeholder-slate-600 focus:border-slate-500 focus:outline-none"
+                 aria-label="virtual IP to ban or unban" />
+          <button id="vip-ban"
+                  class="btn-focus mono rounded border border-slate-700 bg-slate-800/40 px-3 py-1 text-[10px] font-semibold uppercase tracking-widest text-slate-300 transition-colors hover:border-slate-500 disabled:cursor-not-allowed disabled:opacity-40">Ban</button>
+          <button id="vip-unban"
+                  class="btn-focus mono rounded border border-slate-700 bg-slate-800/40 px-3 py-1 text-[10px] font-semibold uppercase tracking-widest text-slate-300 transition-colors hover:border-slate-500 disabled:cursor-not-allowed disabled:opacity-40">Unban</button>
+        </div>
         <div class="max-h-[280px] overflow-y-auto">
           <table class="w-full text-sm">
             <thead class="sticky top-0 bg-[#0f1520] text-left text-xs uppercase tracking-widest text-slate-500">

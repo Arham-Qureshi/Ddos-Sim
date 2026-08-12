@@ -33,6 +33,15 @@ public:
     // Snapshot of the most recent bans, newest last, capped at 16.
     std::vector<RecentBlock> recent_blocks() const;
 
+    // Mitigation master switch: when disabled, allow() always passes.
+    void set_enabled(bool on);
+    bool enabled() const;
+
+    // Permanent ban/unban. Ban is refused (returns false) for an invalid
+    // address; unban is refused when the vip is not currently banned.
+    bool manual_ban(const std::string& vip);
+    bool manual_unban(const std::string& vip);
+
 private:
     bool is_banned(const std::string& vip, uint64_t now_ms);
     bool allow_token_bucket(const std::string& vip, uint64_t now_ms);
@@ -58,4 +67,5 @@ private:
     mutable std::shared_mutex mutex_;
     std::deque<RecentBlock> recent_blocks_;
     std::atomic<uint64_t> calls_since_prune_{0};
+    std::atomic<bool> enabled_{true};
 };
