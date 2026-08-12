@@ -1,5 +1,7 @@
 #include "rate_limiter.hpp"
 
+#include "netutil.hpp"
+
 #include <algorithm>
 #include <chrono>
 #include <mutex>
@@ -22,6 +24,9 @@ uint64_t now_ms() {
 RateLimiter::RateLimiter(RateLimiterConfig cfg) : cfg_(cfg) {}
 
 bool RateLimiter::allow(const std::string& vip) {
+    if (!enabled_.load(std::memory_order_relaxed)) {
+        return true;  // mitigation off: everyone passes
+    }
     if (vip == kAdminIp) {
         return true;  // never rate-limit the admin/dashboard IP
     }
@@ -53,6 +58,9 @@ bool RateLimiter::is_banned(const std::string& vip, uint64_t now_ms) {
     auto it = banned_.find(vip);
     if (it == banned_.end()) {
         return false;
+    }
+    if (it->second.unblock_ts == 0) {
+        return true;  // manual permanent ban
     }
     if (it->second.unblock_ts > now_ms) {
         return true;
@@ -131,13 +139,46 @@ void RateLimiter::maybe_prune(uint64_t now_ms) {
         }
     }
     for (auto it = banned_.begin(); it != banned_.end();) {
-        if (it->second.unblock_ts <= now_ms) {
+        if (it->second.unblock_ts != 0 && it->second.unblock_ts <= now_ms) {
             it = banned_.erase(it);  // expired ban -> forget
         } else {
             ++it;
         }
     }
     calls_since_prune_.store(0, std::memory_order_relaxed);
+}
+
+void RateLimiter::set_enabled(bool on) {
+    enabled_.store(on, std::memory_order_relaxed);
+}
+
+bool RateLimiter::enabled() const {
+    return enabled_.load(std::memory_order_relaxed);
+}
+
+bool RateLimiter::manual_ban(const std::string& vip) {
+    if (vip == kAdminIp || !valid_ipv4(vip)) {
+        return false;  // never ban loopback, reject junk
+    }
+    std::unique_lock<std::shared_mutex> lock(mutex_);
+    banned_[vip] = BanEntry{0};  // 0 == permanent sentinel
+    buckets_.erase(vip);
+    windows_.erase(vip);
+    recent_blocks_.push_back(RecentBlock{vip, 0});
+    while (recent_blocks_.size() > kMaxRecentBlocks) {
+        recent_blocks_.pop_front();
+    }
+    return true;
+}
+
+bool RateLimiter::manual_unban(const std::string& vip) {
+    std::unique_lock<std::shared_mutex> lock(mutex_);
+    auto it = banned_.find(vip);
+    if (it == banned_.end()) {
+        return false;
+    }
+    banned_.erase(it);
+    return true;
 }
 
 std::vector<RecentBlock> RateLimiter::recent_blocks() const {
