@@ -11,6 +11,12 @@ class Metrics(BaseModel):
     cpu_load_pct: float = 0
     active_connections: int = 0
 
+class BlockRecord(BaseModel):
+    vip: str
+    blocked_at_ms: int | None = None
+    unblock_ts: int
+    remaining_s: float | None = None
+
 class RecentBlock(BaseModel):
     model_config = ConfigDict(extra="ignore")
     vip: str
@@ -26,6 +32,7 @@ class BlockRecord(BaseModel):
     vip: str
     blocked_at_ms: int | None = None
     unblock_ts: int
+    remaining_s: float | None = None
 
 class HealthResponse(BaseModel):
     status: str
@@ -41,6 +48,13 @@ class TelemetryResponse(BaseModel):
     latest: TelemetryFrame | None = None
     history: list[TelemetryFrame] = []
     history_len: int = 0
+
+class ConfigResponse(BaseModel):
+    rate_limit_max_rps: int
+    rate_limit_block_seconds: int
+    attack_max_rps: int
+    attack_max_threads: int
+    attack_max_duration: int
 
 class WsFrame(BaseModel):
     """chart-shaped frame pushed over the websocket every 0.5s"""
