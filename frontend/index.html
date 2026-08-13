@@ -35,7 +35,9 @@
        chart div ends up 0px tall and echarts draws nothing) */
     .tracking-\[0\.3em\] { letter-spacing: 0.3em; }
     .h-\[340px\] { height: 340px; }
+    .h-\[56px\] { height: 56px; }
     .max-h-\[280px\] { max-height: 280px; }
+    .max-h-\[220px\] { max-height: 220px; }
     .text-\[10px\] { font-size: 10px; }
     .bg-\[\#0a0e14\] { background-color: #0a0e14; }
     .bg-\[\#0f1520\] { background-color: #0f1520; }
@@ -75,6 +77,30 @@
       </div>
     </header>
 
+    <!-- sanity strip: freshness gauge + engine health -->
+    <section class="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div class="panel rounded-lg p-4">
+        <div class="flex items-center justify-between">
+          <p class="text-xs uppercase tracking-widest text-slate-500">Freshness</p>
+          <p id="freshness-age" class="mono text-sm text-slate-300">—</p>
+        </div>
+        <div class="mt-2 h-1.5 rounded-full bg-slate-800">
+          <div id="freshness-bar" class="h-1.5 w-2/3 rounded-full bg-emerald-500 transition-colors"></div>
+        </div>
+        <p class="mt-2 text-xs text-slate-500">last telemetry frame age</p>
+      </div>
+      <div class="panel rounded-lg p-4">
+        <p class="text-xs uppercase tracking-widest text-slate-500">Dropped frames</p>
+        <p id="health-dropped" class="mono mt-1 text-2xl text-amber-300">—</p>
+        <p class="text-xs text-slate-500">UDP frames the listener failed to parse</p>
+      </div>
+      <div class="panel rounded-lg p-4">
+        <p class="text-xs uppercase tracking-widest text-slate-500">Engine uptime</p>
+        <p id="health-uptime" class="mono mt-1 text-2xl text-slate-100">—</p>
+        <p class="text-xs text-slate-500">command center lifetime</p>
+      </div>
+    </section>
+
     <!-- main chart -->
     <section class="panel mt-5 rounded-lg p-4">
       <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
@@ -83,9 +109,11 @@
           <span class="flex items-center gap-1.5"><span class="h-2 w-2 rounded-full" style="background:var(--normal)"></span>normal</span>
           <span class="flex items-center gap-1.5"><span class="h-2 w-2 rounded-full" style="background:var(--attack)"></span>attack</span>
           <span class="flex items-center gap-1.5"><span class="h-2 w-2 rounded-full" style="background:var(--blocked)"></span>blocked</span>
+          <span class="flex items-center gap-1.5"><span class="h-2 w-2 rounded-full" style="background:var(--attack)"></span>limit</span>
         </div>
       </div>
       <div id="traffic-chart" class="h-[340px] w-full"></div>
+      <p class="mt-2 text-xs text-slate-500">dashed amber line = rate-limit threshold · amber band = attack windows · rose spikes = blocked attempts</p>
     </section>
 
     <!-- metrics + security log -->
@@ -94,18 +122,22 @@
         <div class="panel rounded-lg p-4">
           <p class="text-xs uppercase tracking-widest text-slate-500">Active conns</p>
           <p id="metric-conns" class="mono mt-1 text-2xl text-slate-100">0</p>
+          <div id="spark-conns" class="h-[56px] w-full"></div>
         </div>
         <div class="panel rounded-lg p-4">
           <p class="text-xs uppercase tracking-widest text-slate-500">CPU load</p>
           <p id="metric-cpu" class="mono mt-1 text-2xl text-slate-100">0%</p>
+          <div id="spark-cpu" class="h-[56px] w-full"></div>
         </div>
         <div class="panel rounded-lg p-4">
           <p class="text-xs uppercase tracking-widest text-slate-500">Blocked rps</p>
           <p id="metric-blocked" class="mono mt-1 text-2xl" style="color:var(--blocked)">0</p>
+          <p class="text-xs text-slate-500">currently being dropped</p>
         </div>
         <div class="panel rounded-lg p-4">
-          <p class="text-xs uppercase tracking-widest text-slate-500">Last frame</p>
-          <p id="metric-last" class="mono mt-1 text-2xl text-slate-100">—</p>
+          <p class="text-xs uppercase tracking-widest text-slate-500">Blocked total</p>
+          <p id="metric-total-blocked" class="mono mt-1 text-2xl text-rose-300">0</p>
+          <p class="text-xs text-slate-500">cumulative this session</p>
         </div>
       </div>
 
@@ -122,13 +154,13 @@
           <button id="vip-unban"
                   class="btn-focus mono rounded border border-slate-700 bg-slate-800/40 px-3 py-1 text-[10px] font-semibold uppercase tracking-widest text-slate-300 transition-colors hover:border-slate-500 disabled:cursor-not-allowed disabled:opacity-40">Unban</button>
         </div>
-        <div class="max-h-[280px] overflow-y-auto">
+        <div class="max-h-[220px] overflow-y-auto">
           <table class="w-full text-sm">
             <thead class="sticky top-0 bg-[#0f1520] text-left text-xs uppercase tracking-widest text-slate-500">
               <tr>
                 <th class="px-4 py-2 font-semibold">vip</th>
                 <th class="px-4 py-2 font-semibold">status</th>
-                <th class="px-4 py-2 text-right font-semibold">ban clock (mono ms)</th>
+                <th class="px-4 py-2 text-right font-semibold">release</th>
               </tr>
             </thead>
             <tbody id="security-log" class="mono divide-y divide-slate-800/60"></tbody>
@@ -136,6 +168,14 @@
           <p id="log-empty" class="mono px-4 py-6 text-center text-xs text-slate-600">no VIPs blocked yet</p>
         </div>
       </div>
+    </section>
+
+    <!-- event strip: human-readable timeline of what just happened -->
+    <section class="panel mt-5 rounded-lg p-4">
+      <h2 class="mono mb-2 text-sm font-semibold uppercase tracking-widest text-slate-300">Activity</h2>
+      <ul id="event-log" class="max-h-[220px] divide-y divide-slate-800/40 overflow-y-auto">
+        <li id="event-empty" class="px-4 py-1.5 text-xs text-slate-600">no events yet — launch an attack or ban a VIP</li>
+      </ul>
     </section>
   </div>
 

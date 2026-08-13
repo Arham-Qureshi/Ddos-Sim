@@ -58,3 +58,14 @@ def test_blocks_returns_recent():
         r = c.get("/api/blocks")
         assert r.status_code == 200
         assert "recent" in r.json()
+
+
+def test_config_exposes_rate_limit_for_dashboard():
+    app = create_app(Settings(rate_limit_max_rps=42, rate_limit_block_seconds=7))
+    with TestClient(app) as c:
+        r = c.get("/api/config")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["rate_limit_max_rps"] == 42
+        assert body["rate_limit_block_seconds"] == 7
+        assert body["attack_max_rps"] == 1000

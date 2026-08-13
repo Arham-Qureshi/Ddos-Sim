@@ -1,26 +1,35 @@
-import { RingBuffer, seedSeries, ingestFrame, chartData } from "./telemetry.js";
+import {
+  seedSeries,
+  ingestFrame,
+  chartData,
+  floorCountdown,
+} from "./telemetry.js";
 
 const STALE_MS = 2500; // mirror backend stale_threshold_s
 const WS_TICK_MS = 500; // server pushes every 0.5s
-const MAX_ATTACK_DELAY_BACKOFF = 8000;
+const MAX_RECONNECT_BACKOFF = 8000;
 const ATTACK_PARAMS = { rps: 200, threads: 4, duration: 10 };
 
 const state = {
   series: null,
   chart: null,
-  buffers: {
-    conns: new RingBuffer(),
-    cpu: new RingBuffer(),
-  },
+  sparkConns: null,
+  sparkCpu: null,
   ws: null,
   backoff: 500,
   lastMessageAt: 0,
-  engineLive: false,
-  lastAttackAt: 0,
-  mitigationOn: true,
-  attackActive: false,
+  config: {
+    rateLimitMaxRps: 20,
+    rateLimitBlockSeconds: 10,
+  },
+  attackWindows: [], // [{ startAt, endAt }] for chart shading (ms)
+  totalBlocked: 0,
+  events: [], // [{ at, kind, text }] newest first
   engineReachable: true,
-  controlTimer: null,
+  attackActive: false,
+  mitigationOn: true,
+  lastAttackAt: 0,
+  seedRendered: false,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -28,13 +37,21 @@ const $ = (id) => document.getElementById(id);
 const els = {
   statusDot: $("status-dot"),
   statusText: $("status-text"),
+  freshnessAge: $("freshness-age"),
+  freshnessBar: $("freshness-bar"),
   chart: $("traffic-chart"),
+  sparkConns: $("spark-conns"),
+  sparkCpu: $("spark-cpu"),
   conns: $("metric-conns"),
   cpu: $("metric-cpu"),
   blocked: $("metric-blocked"),
-  last: $("metric-last"),
+  totalBlocked: $("metric-total-blocked"),
   log: $("security-log"),
   logEmpty: $("log-empty"),
+  events: $("event-log"),
+  eventsEmpty: $("event-empty"),
+  droppedFrames: $("health-dropped"),
+  uptime: $("health-uptime"),
   attackBtn: $("launch-attack"),
   stopBtn: $("stop-attack"),
   mitigationBtn: $("mitigation-toggle"),
@@ -44,7 +61,7 @@ const els = {
   toast: $("toast"),
 };
 
-// ---- status pill ----
+// ---- status pill + freshness gauge ----
 function setStatus(kind, text) {
   const palette = {
     live: ["bg-emerald-400", "text-emerald-300"],
@@ -56,6 +73,7 @@ function setStatus(kind, text) {
   els.statusText.textContent = text;
   els.statusText.className = `mono text-sm uppercase tracking-widest ${txt}`;
   if (kind === "live") els.statusDot.classList.remove("pulse-dot");
+  else els.statusDot.classList.add("pulse-dot");
 }
 
 function toast(msg) {
@@ -64,20 +82,36 @@ function toast(msg) {
   setTimeout(() => els.toast.classList.add("hide"), 2600);
 }
 
+// freshness gauge re-armed on every frame and twice per second between them
+function updateFreshness() {
+  if (!state.lastMessageAt) return; // nothing seen yet, keep the placeholder
+  const age = Date.now() - state.lastMessageAt;
+  const fresh = age < STALE_MS - 500;
+  els.freshnessAge.textContent = `${(age / 1000).toFixed(1)}s`;
+  const thumbs = ["bg-emerald-500", "bg-amber-500", "bg-rose-500"];
+  els.freshnessBar.className = `h-1.5 rounded-full transition-colors ${
+    fresh ? thumbs[0] : age < STALE_MS + 500 ? thumbs[1] : thumbs[2]
+  }`;
+  if (!fresh && els.statusDot.classList.contains("bg-emerald-400")) {
+    setStatus("down", "engine stale — reconnecting");
+  }
+}
+
 // ---- charts ----
+const SERIES_DEF = [
+  { key: "normal", name: "normal rps", color: "#38bdf8", fill: "rgba(56,189,248,0.12)" },
+  { key: "attack", name: "attack rps", color: "#f59e0b", fill: "rgba(245,158,11,0.22)" },
+  { key: "blocked", name: "blocked rps", color: "#fb7185", fill: "rgba(251,113,133,0.22)" },
+];
+
 function buildChartOptions() {
   const axisStyle = {
     axisLine: { lineStyle: { color: "rgba(148,163,184,0.25)" } },
     axisLabel: { color: "#7c8aa0" },
     splitLine: { lineStyle: { color: "rgba(148,163,184,0.08)" } },
   };
-  const seriesDef = [
-    { key: "attack", name: "attack rps", color: "#f59e0b", fill: "rgba(245,158,11,0.25)" },
-    { key: "blocked", name: "blocked rps", color: "#fb7185", fill: "rgba(251,113,133,0.25)" },
-    { key: "normal", name: "normal rps", color: "#38bdf8", fill: "rgba(56,189,248,0.25)" },
-  ];
   return {
-    animationDuration: 0, // stream smooth, no bounce on every tick
+    animation: false, // stream smooth, no bounce on every tick
     grid: { left: 48, right: 16, top: 32, bottom: 28 },
     tooltip: {
       trigger: "axis",
@@ -90,9 +124,20 @@ function buildChartOptions() {
       ...axisStyle,
       axisLabel: { ...axisStyle.axisLabel, formatter: "{HH}:{mm}:{ss}" },
     },
-    yAxis: { type: "value", ...axisStyle, name: "rps", nameTextStyle: { color: "#7c8aa0" } },
-    series: seriesDef.map((s) => ({
-      key: s.key,
+    yAxis: {
+      type: "value",
+      ...axisStyle,
+      name: "rps",
+      scale: true,
+      nameTextStyle: { color: "#7c8aa0" },
+      markLine: {
+        data: [{ yAxis: state.config.rateLimitMaxRps }],
+        lineStyle: { color: "#f59e0b", type: "dashed", width: 1 },
+        label: { formatter: "limit ${rateLimitMaxRps} rps", color: "#f59e0b", position: "insideEndTop" },
+      },
+    },
+    series: SERIES_DEF.map((s) => ({
+      id: s.key,
       name: s.name,
       type: "line",
       showSymbol: false,
@@ -105,58 +150,156 @@ function buildChartOptions() {
   };
 }
 
+// merge-mode update: structural options are set once, only data streams in each
+// tick. avoids the full-chart teardown (setOption(..., true)) that used to glitch.
 function render() {
-  const opts = buildChartOptions();
-  opts.series.forEach((s) => {
-    s.data = chartData(state.series, s.key);
-  });
-  state.chart.setOption(opts, true);
+  if (!state.series) return;
+  const patch = { series: [] };
+  for (const s of SERIES_DEF) {
+    const seriesPatch = { id: s.key, data: chartData(state.series, s.key) };
+    if (s.key === "attack") seriesPatch.markArea = attackMarkArea();
+    patch.series.push(seriesPatch);
+  }
+  state.chart.setOption(patch);
+  sparkRender(state.sparkConns, chartData(state.series, "conns"));
+  sparkRender(state.sparkCpu, chartData(state.series, "cpu"));
 }
 
-// ---- security log ----
-const knownVips = new Set();
+function attackMarkArea() {
+  const areas = [];
+  for (const w of state.attackWindows) {
+    const start = w.startAt;
+    if (start == null) continue;
+    const end = w.endAt ?? Date.now();
+    areas.push([
+      {
+        xAxis: start,
+        itemStyle: { color: "rgba(245,158,11,0.08)" },
+        label: { show: false },
+      },
+      { xAxis: end, label: { show: false } },
+    ]);
+  }
+  return { silent: true, data: areas };
+}
+
+function sparkOptions(color) {
+  return {
+    animation: false,
+    grid: { left: 2, right: 2, top: 2, bottom: 2 },
+    xAxis: { type: "time", show: false },
+    yAxis: { type: "value", show: false, scale: true },
+    series: [{ type: "line", showSymbol: false, smooth: true, lineStyle: { width: 1.5, color }, itemStyle: { color }, data: [] }],
+  };
+}
+
+function sparkRender(chart, points) {
+  if (!chart) return;
+  chart.setOption({ series: [{ id: "spark", data: points }] });
+}
+
+// ---- security log (human ban clock) ----
 let lastBlocks = [];
+const seenBannedVips = new Set(); // persistent across renders -> flash only once per new ban
 
 function renderLogWith(blocks) {
   if (!blocks) return;
   lastBlocks = blocks;
   const tbody = els.log;
   tbody.textContent = "";
-  const all = blocks.map((b) => b.vip);
   for (const b of blocks) {
+    const isNew = !seenBannedVips.has(b.vip);
+    if (isNew) seenBannedVips.add(b.vip);
     const tr = document.createElement("tr");
     tr.className = "px-4 py-2";
-    if (!knownVips.has(b.vip)) {
-      tr.classList.add("flash-row");
-    }
+    if (isNew) tr.classList.add("flash-row");
+    tr.classList.add("divide-x", "divide-slate-800/60"); // subtle row separation
+
     const vip = document.createElement("td");
     vip.className = "px-4 py-2 text-slate-100";
     vip.textContent = b.vip;
+
     const status = document.createElement("td");
     status.className = "px-4 py-2";
     status.innerHTML = `<span class="rounded bg-rose-900/40 px-2 py-0.5 text-[10px] uppercase tracking-widest text-rose-300">blocked</span>`;
+
     const clock = document.createElement("td");
-    clock.className = "px-4 py-2 text-right text-slate-500";
-    clock.textContent = b.unblock_ts === 0 ? "permanent" : (b.unblock_ts ?? "—");
+    clock.className = "px-4 py-2 text-right";
+    const remaining = floorCountdown(b.remaining_s);
+    clock.textContent = remaining === null ? "permanent" : `expires in ${remaining}s`;
+    clock.className += remaining === null
+      ? " text-slate-500"
+      : remaining <= 3 ? " text-rose-300" : " text-slate-400";
+
     tr.append(vip, status, clock);
     tbody.prepend(tr); // newest on top
   }
-  knownVips.clear();
-  all.forEach((v) => knownVips.add(v));
   els.logEmpty.style.display = blocks.length ? "none" : "";
 }
 
+// ---- event strip ----
+function pushEvent(kind, text) {
+  state.events.unshift({ at: Date.now(), kind, text });
+  state.events = state.events.slice(0, 60); // bounded
+  renderEvents();
+}
+
+function renderEvents() {
+  els.events.querySelectorAll("li:not(#event-empty)").forEach((li) => li.remove());
+  const palette = {
+    attack: "text-amber-300",
+    stop: "text-slate-400",
+    mitigation: "text-emerald-300",
+    ban: "text-rose-300",
+  };
+  for (const e of state.events) {
+    const li = document.createElement("li");
+    li.className = "px-4 py-1.5 text-xs break-words flex gap-2";
+    const time = document.createElement("span");
+    time.className = "mono shrink-0 text-slate-600";
+    time.textContent = new Date(e.at).toLocaleTimeString();
+    const body = document.createElement("span");
+    body.className = palette[e.kind] || "text-slate-300";
+    body.textContent = e.text;
+    li.append(time, body);
+    els.events.appendChild(li);
+  }
+  els.eventsEmpty.style.display = state.events.length ? "none" : "";
+}
+
+function handleAttackWindowChange() {
+  // called after attack state flips; maintain shading + events
+  if (state.attackActive) {
+    state.attackWindows.push({ startAt: Date.now(), endAt: null });
+    pushEvent("attack", `attack launched @ ${ATTACK_PARAMS.rps} rps · ${ATTACK_PARAMS.duration}s`);
+  } else {
+    const open = state.attackWindows[state.attackWindows.length - 1];
+    if (open && open.endAt == null) open.endAt = Date.now();
+    render(); // close shading immediately
+  }
+}
+
+// ---- metrics ----
 function updateMetrics(f) {
   els.conns.textContent = String(f.active_connections ?? 0);
-  els.cpu.textContent = `${((f.cpu_load_pct ?? 0) * 100).toFixed(0)}%`;
+  els.cpu.textContent = `${Math.round(f.cpu_load_pct ?? 0)}%`;
   els.blocked.textContent = String(f.blocked_rps ?? 0);
-  const ago = Date.now() - state.lastMessageAt;
-  els.last.textContent = `${(ago / 1000).toFixed(1)}s`;
+  // cumulative blocked traffic estimate (rps * 0.5s tick)
+  const nowBlocked = f.blocked_rps ?? 0;
+  if (nowBlocked > 0) {
+    state.totalBlocked += nowBlocked * (WS_TICK_MS / 1000);
+    els.totalBlocked.textContent = Math.round(state.totalBlocked);
+  }
+}
+
+function renderHealth(health) {
+  els.droppedFrames.textContent = health?.dropped_frames ?? "—";
+  els.uptime.textContent = health ? `${Math.round(health.uptime_s)}s` : "—";
 }
 
 // ---- websocket ----
 function wsUrl() {
-  const base = window.__API_BASE__ || ""; // e.g. "localhost:8000" when http.server serves this page
+  const base = window.__API_BASE__ || "";
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   const host = base || location.host;
   return `${proto}//${host}/api/ws/telemetry`;
@@ -164,7 +307,7 @@ function wsUrl() {
 
 function scheduleReconnect() {
   setTimeout(connect, state.backoff);
-  state.backoff = Math.min(state.backoff * 2, MAX_ATTACK_DELAY_BACKOFF);
+  state.backoff = Math.min(state.backoff * 2, MAX_RECONNECT_BACKOFF);
   setStatus("connecting", "reconnecting…");
 }
 
@@ -174,14 +317,14 @@ function connect() {
   state.ws = ws;
 
   ws.onopen = () => {
-    state.backoff = 500; // reset backoff on a clean connect
+    state.backoff = 500;
     setStatus("connecting", "syncing…");
     seedFromRest();
+    refreshConfigAndHealth();
     syncControlState();
   };
 
   ws.onmessage = (ev) => {
-    state.lastMessageAt = Date.now();
     let frame = null;
     try {
       frame = JSON.parse(ev.data);
@@ -189,14 +332,18 @@ function connect() {
       return;
     }
     if (!frame) return; // engine silent
+    state.lastMessageAt = Date.now(); // only real frames prove liveness
     if (!state.series) {
       state.series = seedSeries([{ timestamp: frame.ts, metrics: frame }]);
+      state.chart.setOption(buildChartOptions()); // structural options once
+      if (!state.sparkConns) { initSparkCharts(); }
+      state.seedRendered = true;
     }
     ingestFrame(frame, state.series);
     render();
     renderLogWith(frame.blocks || []);
     updateMetrics(frame);
-    setEngineLive(true);
+    updateFreshness();
     setStatus("live", "engine live");
   };
 
@@ -207,6 +354,7 @@ function connect() {
   ws.onerror = () => ws.close();
 }
 
+// ---- REST seeding: config, latest telemetry, health ----
 async function seedFromRest() {
   const base = window.__API_BASE__ || location.host;
   try {
@@ -214,23 +362,43 @@ async function seedFromRest() {
     if (!res.ok) return;
     const body = await res.json();
     const hist = body.history || [];
-    if (hist.length) {
+    if (hist.length && !state.seedRendered) {
       state.series = seedSeries(hist);
+      state.chart.setOption(buildChartOptions());
+      if (!state.sparkConns) initSparkCharts();
+      state.seedRendered = true;
       render();
     }
-    setEngineLive(body.engine_connected);
   } catch {
-    // REST seed is best-effort; live ws frames will fill the chart anyway
+    // live ws frames will fill the chart anyway
+  }
+  renderHealth(await fetchHealth(base));
+}
+
+async function fetchHealth(base) {
+  try {
+    const res = await fetch(`http://${base}/api/health`);
+    return res.ok ? await res.json() : null;
+  } catch {
+    return null;
   }
 }
 
-let staleTimer = null;
-function setEngineLive(live) {
-  state.engineLive = live;
-  if (staleTimer) clearTimeout(staleTimer);
-  if (live) {
-    // if frames stop arriving but ws stays open, flip the pill to dark
-    staleTimer = setTimeout(() => setEngineLive(false), STALE_MS);
+async function refreshConfigAndHealth() {
+  const base = window.__API_BASE__ || location.host;
+  try {
+    const res = await fetch(`http://${base}/api/config`);
+    if (res.ok) {
+      const cfg = await res.json();
+      state.config.rateLimitMaxRps = cfg.rate_limit_max_rps ?? 20;
+      state.config.rateLimitBlockSeconds = cfg.rate_limit_block_seconds ?? 10;
+      // rebuild the threshold line around the real config value
+      const opts = buildChartOptions();
+      opts.series = []; // don't clobber accumulated data; markLine rides on yAxis
+      state.chart.setOption({ yAxis: opts.yAxis });
+    }
+  } catch {
+    // defaults are fine; config sets threshold on next chart init
   }
 }
 
@@ -239,16 +407,13 @@ function apiBase() {
   return window.__API_BASE__ || location.host;
 }
 
-// find where FastAPI actually lives when the static host can't proxy /api.
-// nginx (or FastAPI serving the page) answers on the page origin -> keep it;
-// python http.server returns 404 for /api -> point REST+WS at :8000 instead.
 async function resolveApiBase() {
-  if (window.__API_BASE__) return; // explicitly overridden in the console
+  if (window.__API_BASE__) return;
   try {
     const host = location.host || "localhost:8000";
     const res = await fetch(`http://${host}/api/control/status`);
-    if (res.ok) return; // same-origin proxy already works
-  } catch { /* origin unreachable -> fall through */ }
+    if (res.ok) return;
+  } catch { /* fall through to :8000 */ }
   window.__API_BASE__ = `${location.hostname || "localhost"}:8000`;
 }
 
@@ -264,17 +429,17 @@ async function controlRequest(method, path, body = null) {
 }
 
 function replyText(data) {
-  // FastAPI error envelopes live under detail; happy path is the body itself
   return data?.reply || data?.detail?.reply || "no reply";
 }
 
-// reflect engine state (control socket) into the header buttons
 async function syncControlState() {
   let status = null;
   try {
     const { status: code, data } = await controlRequest("GET", "/api/control/status");
     status = code === 200 ? data : null;
   } catch { /* engine dark */ }
+  const wasRunning = state.attackActive;
+  const wasMitigation = state.mitigationOn;
   if (!status) {
     state.engineReachable = false;
     state.attackActive = false;
@@ -282,6 +447,10 @@ async function syncControlState() {
     state.engineReachable = status.engine_reachable ?? true;
     state.attackActive = Boolean(status.attack_running);
     state.mitigationOn = Boolean(status.mitigation_on);
+  }
+  if (state.attackActive !== wasRunning) handleAttackWindowChange();
+  if (state.mitigationOn !== wasMitigation) {
+    pushEvent("mitigation", `rate-limit mitigation → ${state.mitigationOn ? "on" : "off"}`);
   }
   updateControlUi();
 }
@@ -305,15 +474,14 @@ function updateControlUi() {
 
 function handleAttack() {
   const now = Date.now();
-  if (now - state.lastAttackAt < 5000) return; // client debounce on top of backend cooldown
+  if (now - state.lastAttackAt < 5000) return; // debounce on top of backend cooldown
   state.lastAttackAt = now;
   toast("launching attack…");
   controlRequest("POST", "/api/control/attack", ATTACK_PARAMS).then(({ status, data }) => {
     if (status === 200 && data?.ok) {
       state.attackActive = true;
+      handleAttackWindowChange();
       toast("attack started");
-      clearTimeout(state.controlTimer);
-      state.controlTimer = setTimeout(syncControlState, (ATTACK_PARAMS.duration + 1) * 1000);
     } else if (status === 429 || (data && !data.ok)) {
       toast(replyText(data) || "cooling down");
     } else if (status === 503 || status === 0) {
@@ -336,12 +504,12 @@ async function handleStop() {
     const { data } = await controlRequest("POST", "/api/control/attack/stop");
     toast(replyText(data) || "stopped");
     state.attackActive = false;
+    handleAttackWindowChange();
   } catch {
     state.engineReachable = false;
     toast("engine offline — start ddos_server");
     state.attackActive = false;
   }
-  clearTimeout(state.controlTimer);
   syncControlState();
 }
 
@@ -367,6 +535,8 @@ function handleVip(actionStr) {
   const path = actionStr === "ban" ? "/api/control/vips/ban" : "/api/control/vips/unban";
   toast(`${actionStr}ning ${vip}…`);
   controlRequest("POST", path, { vip }).then(({ status, data }) => {
+    if (status === 200 && actionStr === "ban") pushEvent("ban", `manual ban issued for ${vip}`);
+    if (status === 200 && actionStr === "unban") pushEvent("mitigation", `manual unban for ${vip}`);
     toast(replyText(data) || `${actionStr}ned`);
     if (status === 503) {
       state.engineReachable = false;
@@ -379,16 +549,22 @@ function handleVip(actionStr) {
   });
 }
 
-// ---- boot ----
-if (state.chart) {
-  throw new Error("bootstrap ran twice");
+// ---- sparkline init ----
+function initSparkCharts() {
+  state.sparkConns = echarts.init(els.sparkConns);
+  state.sparkCpu = echarts.init(els.sparkCpu);
+  state.sparkConns.setOption(sparkOptions("#64748b"));
+  state.sparkCpu.setOption(sparkOptions("#7c8aa0"));
 }
+
+// ---- boot ----
 state.chart = echarts.init(els.chart);
-render();
+state.chart.setOption(buildChartOptions()); // structural options up-front
 renderLogWith([]);
+renderEvents();
 
 async function init() {
-  await resolveApiBase(); // REST/WS must hit FastAPI, not the static host
+  await resolveApiBase();
   connect();
   updateControlUi();
   syncControlState();
@@ -400,8 +576,14 @@ async function init() {
   els.vipInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter") handleVip("ban");
   });
+  setInterval(updateFreshness, 500); // gauge ticks even between frames
+  setInterval(() => { if (state.lastMessageAt) renderLogWith(lastBlocks); }, 1000); // countdowns tick every second
 }
 init();
 
-// keep chart sized if the window resizes
-window.addEventListener("resize", () => state.chart && state.chart.resize());
+// keep charts sized if the window resizes
+window.addEventListener("resize", () => {
+  state.chart && state.chart.resize();
+  state.sparkConns && state.sparkConns.resize();
+  state.sparkCpu && state.sparkCpu.resize();
+});

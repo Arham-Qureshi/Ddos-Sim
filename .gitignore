@@ -10,3 +10,4 @@ codebase-out/
 .agentignore
 AGENTS.md
 node_modules/
+graphify-out/   
