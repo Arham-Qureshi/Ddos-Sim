@@ -17,7 +17,7 @@ def _build_frame(state) -> WsFrame | None:
     if latest is None:
         return None
     blocks = [
-        {"vip": b.vip, "unblock_ts": b.unblock_ts}
+        {"vip": b.vip, "unblock_ts": b.unblock_ts, "remaining_s": b.remaining_s}
         for b in state.recent_blocks_snapshot()
     ]
     return WsFrame(
