@@ -21,6 +21,8 @@ class Settings:
     attack_max_rps: int = 1000
     attack_max_threads: int = 64
     attack_max_duration: int = 300
+    rate_limit_max_rps: int = 2
+    rate_limit_block_seconds: int = 10
 
 def load_settings(config_path: Path | None = None) -> Settings:
     path = config_path or (REPO_ROOT / "config" / "ddos_sim_config.json")
@@ -33,6 +35,8 @@ def load_settings(config_path: Path | None = None) -> Settings:
             attack_max_rps=data.get("attack_max_rps", 1000),
             attack_max_threads=data.get("attack_max_threads", 64),
             attack_max_duration=data.get("attack_max_duration", 300),
+            rate_limit_max_rps=data.get("rate_limit_max_rps", 2),
+            rate_limit_block_seconds=data.get("rate_limit_block_seconds", 10),
         )
     except (OSError, ValueError) as exc:
         logger.warning("config %s unreadable (%s); using defaults", path, exc)
