@@ -85,6 +85,24 @@ def test_cors_headers_present():
         assert "access-control-allow-origin" in r.headers
 
 
+async def test_ws_telemetry_blocks_carry_countdown():
+    app = create_app(Settings(udp_port=_free_udp_port(), rate_limit_block_seconds=10))
+    await app.state.state.update(
+        TelemetryFrame(timestamp=1, metrics=Metrics(normal_rps=2)),
+        now=time.monotonic(),
+    )
+    await app.state.state.record_blocks(
+        [{"vip": "10.0.0.9", "unblock_ts": 500}], now=time.monotonic()
+    )
+    with TestClient(app) as c:
+        with c.websocket_connect("/api/ws/telemetry") as ws:
+            data = ws.receive_json()
+            blocks = data["blocks"]
+            assert len(blocks) == 1
+            assert blocks[0]["vip"] == "10.0.0.9"
+            assert blocks[0]["remaining_s"] is not None
+
+
 def test_ws_telemetry_route_is_listed():
     app = create_app(Settings(udp_port=_free_udp_port()))
     assert app.url_path_for("ws_telemetry") == "/api/ws/telemetry"
