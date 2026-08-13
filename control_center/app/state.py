@@ -43,10 +43,18 @@ class AppState:
                 vip = e.get("vip")
                 if not vip:
                     continue
+                unblock_ts = e.get("unblock_ts", 0)
+                prev = self._blocks.get(vip)
+                # anchor the ban clock only on first sight or re-ban (unblock_ts
+                # changed); keep it stable while the same block keeps streaming in
+                if prev is None or prev.unblock_ts != unblock_ts:
+                    blocked_at_ms = e.get("blocked_at_ms", int(now * 1000))
+                else:
+                    blocked_at_ms = prev.blocked_at_ms
                 rec = BlockRecord(
                     vip=vip,
-                    blocked_at_ms=e.get("blocked_at_ms", int(now * 1000)),
-                    unblock_ts=e.get("unblock_ts", 0),
+                    blocked_at_ms=blocked_at_ms,
+                    unblock_ts=unblock_ts,
                 )
                 self._blocks[vip] = rec
             while len(self._blocks) > self._settings.blocks_cap:
@@ -65,8 +73,28 @@ class AppState:
     def history_snapshot(self) -> list[TelemetryFrame]:
         return list(self._history)
 
-    def recent_blocks_snapshot(self) -> list[BlockRecord]:
-        return list(self._blocks.values())
+    def recent_blocks_snapshot(self, now: float | None = None) -> list[BlockRecord]:
+        now = now if now is not None else time.monotonic()
+        now_ms = now * 1000
+        snap = []
+        for b in self._blocks.values():
+            remaining = None
+            # permanent bans (unblock_ts == 0) never expire
+            if b.unblock_ts != 0 and b.blocked_at_ms is not None:
+                remaining = max(
+                    0.0,
+                    self._settings.rate_limit_block_seconds
+                    - (now_ms - b.blocked_at_ms) / 1000.0,
+                )
+            snap.append(
+                BlockRecord(
+                    vip=b.vip,
+                    blocked_at_ms=b.blocked_at_ms,
+                    unblock_ts=b.unblock_ts,
+                    remaining_s=remaining,
+                )
+            )
+        return snap
 
     async def cooldown_remaining(self, now: float | None = None) -> float:
         now = now if now is not None else time.monotonic()
