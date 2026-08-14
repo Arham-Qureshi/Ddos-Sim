@@ -21,7 +21,18 @@ uint64_t now_ms() {
 
 }  // namespace
 
-RateLimiter::RateLimiter(RateLimiterConfig cfg) : cfg_(cfg) {}
+RateLimiter::RateLimiter(RateLimiterConfig cfg) : cfg_(cfg) {
+    algorithm_.store(static_cast<int>(cfg.algorithm), std::memory_order_relaxed);
+}
+
+void RateLimiter::set_algorithm(RateLimiterConfig::Algorithm algo) {
+    algorithm_.store(static_cast<int>(algo), std::memory_order_relaxed);
+}
+
+RateLimiterConfig::Algorithm RateLimiter::algorithm() const {
+    return static_cast<RateLimiterConfig::Algorithm>(
+        algorithm_.load(std::memory_order_relaxed));
+}
 
 bool RateLimiter::allow(const std::string& vip) {
     if (!enabled_.load(std::memory_order_relaxed)) {
@@ -39,7 +50,7 @@ bool RateLimiter::allow(const std::string& vip) {
     }
 
     bool ok = false;
-    switch (cfg_.algorithm) {
+    switch (algorithm()) {
         case RateLimiterConfig::Algorithm::kTokenBucket:
             ok = allow_token_bucket(vip, now);
             break;
