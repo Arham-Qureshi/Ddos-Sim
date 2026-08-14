@@ -24,12 +24,16 @@ public:
     void stop();
 
     bool attack_running() const { return attack_running_.load(std::memory_order_relaxed); }
+    bool baseline_running() const { return baseline_running_.load(std::memory_order_relaxed); }
 
 private:
     void run_loop();
     std::string handle_command(const std::string& line);
     std::string start_attack(size_t rps, size_t threads, size_t duration);
     std::string stop_attack();
+    std::string start_baseline(size_t bots);
+    std::string stop_baseline();
+    std::string emergency_stop();
     bool reap_child();
 
     uint16_t port_;
@@ -45,4 +49,10 @@ private:
     std::thread thread_;
     std::atomic<bool> attack_running_{false};
     pid_t child_pid_ = 0;
+    std::atomic<bool> baseline_running_{false};
+    pid_t baseline_pid_ = 0;
+    size_t baseline_bots_ = 0;
+    size_t last_attack_rps_ = 0;
+    size_t last_attack_threads_ = 0;
+    size_t last_attack_duration_ = 0;
 };

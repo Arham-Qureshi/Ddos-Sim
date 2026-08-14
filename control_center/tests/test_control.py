@@ -155,12 +155,15 @@ def test_unban_sends_command(monkeypatch):
 
 
 def test_status_parses_engine_reply(monkeypatch):
-    app = _app(monkeypatch, lambda cmd: 'OK:STATUS {"mitigation":true,"attack_running":true,"pid":42}')
+    app = _app(monkeypatch, lambda cmd: 'OK:STATUS {"mitigation":true,"algorithm":"token_bucket","attack_running":true,"pid":42,"baseline_running":false,"baseline_bots":0,"attack_params":{"rps":200,"threads":4,"duration":3}}')
     with TestClient(app) as c:
         r = c.get("/api/control/status")
     assert r.status_code == 200
-    assert r.json() == {"mitigation_on": True, "attack_running": True,
-                        "pid": 42, "engine_reachable": True}
+    assert r.json() == {"mitigation_on": True, "algorithm": "token_bucket",
+                        "attack_running": True, "pid": 42,
+                        "baseline_running": False, "baseline_bots": 0,
+                        "attack_params": {"rps": 200, "threads": 4, "duration": 3},
+                        "engine_reachable": True}
 
 
 def test_status_reports_engine_down(monkeypatch):
@@ -170,3 +173,77 @@ def test_status_reports_engine_down(monkeypatch):
     assert r.status_code == 200
     assert r.json()["engine_reachable"] is False
     assert r.json()["attack_running"] is False
+
+
+def test_status_parses_algorithm_and_baseline(monkeypatch):
+    app = _app(monkeypatch, lambda cmd: (
+        'OK:STATUS {"mitigation":true,"algorithm":"sliding_window",'
+        '"attack_running":false,"pid":0,"baseline_running":true,'
+        '"baseline_bots":6,"attack_params":{"rps":200,"threads":4,"duration":3}}'))
+    with TestClient(app) as c:
+        r = c.get("/api/control/status")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["algorithm"] == "sliding_window"
+    assert body["baseline_running"] is True
+    assert body["baseline_bots"] == 6
+    assert body["attack_params"] == {"rps": 200, "threads": 4, "duration": 3}
+
+
+def test_algorithm_switch_maps_payload(monkeypatch):
+    app = _app(monkeypatch, lambda cmd: "OK:ALGORITHM sliding_window")
+    with TestClient(app) as c:
+        r = c.post("/api/control/algorithm", json={"algorithm": "sliding_window"})
+    assert r.status_code == 200 and r.json()["ok"] is True
+    assert app.test_calls == ["CMD_SET_ALGORITHM sliding_window"]
+
+
+def test_algorithm_invalid_rejected(monkeypatch):
+    app = _app(monkeypatch, lambda cmd: "OK:DUMMY")
+    with TestClient(app) as c:
+        r = c.post("/api/control/algorithm", json={"algorithm": "leap_year"})
+    assert r.status_code == 422
+    assert app.test_calls == []  # engine never contacted
+
+
+def test_baseline_on_maps_payload(monkeypatch):
+    app = _app(monkeypatch, lambda cmd: "OK:BASELINE_STARTED 99")
+    with TestClient(app) as c:
+        r = c.post("/api/control/baseline", json={"enabled": True, "bots": 6})
+    assert r.status_code == 200
+    assert app.test_calls == ["CMD_SET_BASELINE on 6"]
+
+
+def test_baseline_off_maps_payload(monkeypatch):
+    app = _app(monkeypatch, lambda cmd: "OK:BASELINE_STOPPED")
+    with TestClient(app) as c:
+        r = c.post("/api/control/baseline", json={"enabled": False})
+    assert r.status_code == 200
+    assert app.test_calls == ["CMD_SET_BASELINE off"]
+
+
+def test_baseline_bots_out_of_range_rejected(monkeypatch):
+    app = _app(monkeypatch, lambda cmd: "OK:DUMMY")
+    with TestClient(app) as c:
+        r = c.post("/api/control/baseline", json={"enabled": True, "bots": 0})
+    assert r.status_code == 422
+    assert app.test_calls == []
+
+
+def test_emergency_stop_maps_payload(monkeypatch):
+    app = _app(monkeypatch, lambda cmd: "OK:EMERGENCY_STOP")
+    with TestClient(app) as c:
+        r = c.post("/api/control/emergency-stop")
+    assert r.status_code == 200 and r.json()["ok"] is True
+    assert app.test_calls == ["CMD_EMERGENCY_STOP"]
+
+
+def test_new_endpoints_engine_dark_gives_503(monkeypatch):
+    app = _app(monkeypatch, lambda cmd: (_ for _ in ()).throw(cc.EngineUnavailable("down")))
+    with TestClient(app) as c:
+        algo = c.post("/api/control/algorithm", json={"algorithm": "token_bucket"})
+        base = c.post("/api/control/baseline", json={"enabled": True, "bots": 4})
+        stop = c.post("/api/control/emergency-stop")
+    for r in (algo, base, stop):
+        assert r.status_code == 503
+        assert r.json()["detail"]["engine_reachable"] is False

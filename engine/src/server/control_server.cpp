@@ -153,6 +153,22 @@ void AdminServer::stop() {
         thread_.join();
     }
     // Bounded shutdown: SIGTERM, then SIGKILL if the botnet lingers.
+    if (baseline_running_.load(std::memory_order_relaxed) && baseline_pid_ > 0) {
+        ::kill(baseline_pid_, SIGTERM);
+        for (int i = 0; i < kSigtermGraceMs / kReapGraceMs; ++i) {
+            reap_child();
+            if (!baseline_running_.load(std::memory_order_relaxed)) {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(kReapGraceMs));
+        }
+        if (baseline_running_.load(std::memory_order_relaxed)) {
+            ::kill(baseline_pid_, SIGKILL);
+            ::waitpid(baseline_pid_, nullptr, 0);
+            baseline_running_.store(false, std::memory_order_relaxed);
+            baseline_pid_ = 0;
+        }
+    }
     if (attack_running_.load(std::memory_order_relaxed) && child_pid_ > 0) {
         ::kill(child_pid_, SIGTERM);
         for (int i = 0; i < kSigtermGraceMs / kReapGraceMs; ++i) {
@@ -215,8 +231,20 @@ std::string AdminServer::handle_command(const std::string& line) {
     if (cmd == "CMD_GET_STATUS") {
         nlohmann::json j = {
             {"mitigation", limiter_ ? limiter_->enabled() : true},
+            {"algorithm", limiter_
+                              ? (limiter_->algorithm() ==
+                                         RateLimiterConfig::Algorithm::kSlidingWindow
+                                     ? "sliding_window"
+                                     : "token_bucket")
+                              : "token_bucket"},
             {"attack_running", attack_running_.load(std::memory_order_relaxed)},
             {"pid", attack_running_.load(std::memory_order_relaxed) ? child_pid_ : 0},
+            {"baseline_running", baseline_running_.load(std::memory_order_relaxed)},
+            {"baseline_bots", baseline_bots_},
+            {"attack_params",
+             {{"rps", last_attack_rps_},
+              {"threads", last_attack_threads_},
+              {"duration", last_attack_duration_}}},
         };
         return "OK:STATUS " + j.dump();
     }
@@ -271,6 +299,45 @@ std::string AdminServer::handle_command(const std::string& line) {
         return stop_attack();
     }
 
+    if (cmd == "CMD_SET_ALGORITHM") {
+        if (t.size() != 2 ||
+            (t[1] != "token_bucket" && t[1] != "sliding_window")) {
+            return "ERR:INVALID_ARGS";
+        }
+        if (limiter_) {
+            limiter_->set_algorithm(
+                t[1] == "sliding_window"
+                    ? RateLimiterConfig::Algorithm::kSlidingWindow
+                    : RateLimiterConfig::Algorithm::kTokenBucket);
+        }
+        return std::string("OK:ALGORITHM ") + t[1];
+    }
+
+    if (cmd == "CMD_SET_BASELINE") {
+        if (t.size() < 2 || t.size() > 3) {
+            return "ERR:INVALID_ARGS";
+        }
+        if (t[1] == "off" && t.size() == 2) {
+            return stop_baseline();
+        }
+        if (t[1] == "on" && t.size() == 3) {
+            size_t bots = 0;
+            if (!parse_uint(t[2], &bots) || bots < 1 ||
+                bots > attack_max_threads_) {
+                return "ERR:INVALID_ARGS";  // resource caps enforced
+            }
+            return start_baseline(bots);
+        }
+        return "ERR:INVALID_ARGS";
+    }
+
+    if (cmd == "CMD_EMERGENCY_STOP") {
+        if (t.size() != 1) {
+            return "ERR:INVALID_ARGS";
+        }
+        return emergency_stop();
+    }
+
     return "ERR:UNKNOWN_COMMAND";
 }
 
@@ -307,6 +374,9 @@ std::string AdminServer::start_attack(size_t rps, size_t threads, size_t duratio
 
     attack_running_.store(true, std::memory_order_relaxed);
     child_pid_ = pid;
+    last_attack_rps_ = rps;
+    last_attack_threads_ = threads;
+    last_attack_duration_ = duration;
     return "OK:ATTACK_STARTED " + std::to_string(pid);
 }
 
@@ -316,7 +386,8 @@ std::string AdminServer::stop_attack() {
     }
     ::kill(child_pid_, SIGTERM);
     for (int i = 0; i < kSigtermGraceMs / kReapGraceMs; ++i) {
-        if (reap_child()) {
+        reap_child();  // clears attack_running_ once the botnet exits
+        if (!attack_running_.load(std::memory_order_relaxed)) {
             return "OK:ATTACK_STOPPED";
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(kReapGraceMs));
@@ -329,17 +400,106 @@ std::string AdminServer::stop_attack() {
     return "OK:ATTACK_STOPPED";
 }
 
-// returns true when the child is gone (reaped or never running)
-bool AdminServer::reap_child() {
-    if (!attack_running_.load(std::memory_order_relaxed) || child_pid_ <= 0) {
-        return true;
+std::string AdminServer::start_baseline(size_t bots) {
+    if (baseline_running_.load(std::memory_order_relaxed)) {
+        return "ERR:BASELINE_ALREADY_RUNNING";
     }
-    int status = 0;
-    pid_t r = waitpid(child_pid_, &status, WNOHANG);
-    if (r == child_pid_) {
+    if (botnet_path_.empty()) {
+        return "ERR:INVALID_ARGS";
+    }
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        std::perror("fork");
+        return "ERR:INTERNAL";
+    }
+    if (pid == 0) {
+        // Child: baseline botnet in normal mode, ~1 rps per bot, indefinite.
+        std::vector<std::string> args = {
+            botnet_path_,
+            "--normal",
+            "--rps", std::to_string(bots),
+            "--threads", std::to_string(bots),
+            "--duration", "0",
+        };
+        std::vector<char*> argv;
+        argv.reserve(args.size() + 1);
+        for (auto& a : args) {
+            argv.push_back(a.data());
+        }
+        argv.push_back(nullptr);
+        execv(botnet_path_.c_str(), argv.data());
+        _exit(127);
+    }
+
+    baseline_running_.store(true, std::memory_order_relaxed);
+    baseline_pid_ = pid;
+    baseline_bots_ = bots;
+    return "OK:BASELINE_STARTED " + std::to_string(pid);
+}
+
+std::string AdminServer::stop_baseline() {
+    if (!baseline_running_.load(std::memory_order_relaxed) || baseline_pid_ <= 0) {
+        return "ERR:NO_BASELINE_RUNNING";
+    }
+    ::kill(baseline_pid_, SIGTERM);
+    for (int i = 0; i < kSigtermGraceMs / kReapGraceMs; ++i) {
+        reap_child();  // clears baseline_running_ once it exits
+        if (!baseline_running_.load(std::memory_order_relaxed)) {
+            return "OK:BASELINE_STOPPED";
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(kReapGraceMs));
+    }
+    ::kill(baseline_pid_, SIGKILL);
+    ::waitpid(baseline_pid_, nullptr, 0);
+    baseline_running_.store(false, std::memory_order_relaxed);
+    baseline_pid_ = 0;
+    return "OK:BASELINE_STOPPED";
+}
+
+std::string AdminServer::emergency_stop() {
+    // Kill both children immediately, no grace window. Mitigation state is
+    // deliberately left alone so the operator sees what it was doing.
+    if (baseline_running_.load(std::memory_order_relaxed) && baseline_pid_ > 0) {
+        ::kill(baseline_pid_, SIGKILL);
+        ::waitpid(baseline_pid_, nullptr, 0);
+        baseline_running_.store(false, std::memory_order_relaxed);
+        baseline_pid_ = 0;
+    }
+    if (attack_running_.load(std::memory_order_relaxed) && child_pid_ > 0) {
+        ::kill(child_pid_, SIGKILL);
+        ::waitpid(child_pid_, nullptr, 0);
         attack_running_.store(false, std::memory_order_relaxed);
         child_pid_ = 0;
-        return true;
     }
-    return false;  // still running (or EINTR, treated as alive)
+    return "OK:EMERGENCY_STOP";
+}
+
+// returns true when BOTH children are gone (reaped or never running)
+bool AdminServer::reap_child() {
+    bool all_done = true;
+
+    if (attack_running_.load(std::memory_order_relaxed) && child_pid_ > 0) {
+        int status = 0;
+        pid_t r = waitpid(child_pid_, &status, WNOHANG);
+        if (r == child_pid_) {
+            attack_running_.store(false, std::memory_order_relaxed);
+            child_pid_ = 0;
+        } else {
+            all_done = false;  // still running (or EINTR, treated as alive)
+        }
+    }
+
+    if (baseline_running_.load(std::memory_order_relaxed) && baseline_pid_ > 0) {
+        int status = 0;
+        pid_t r = waitpid(baseline_pid_, &status, WNOHANG);
+        if (r == baseline_pid_) {
+            baseline_running_.store(false, std::memory_order_relaxed);
+            baseline_pid_ = 0;
+        } else {
+            all_done = false;
+        }
+    }
+
+    return all_done;
 }

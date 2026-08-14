@@ -42,14 +42,16 @@ struct Options {
     size_t threads = 4;
     size_t rps = 0;
     size_t duration_secs = 300;
+    bool normal = false;  // --normal: fixed 10.0.0.<i+1> VIP per thread
 };
 
 void print_usage(const char* prog) {
-    std::printf("usage: %s --rps <n> [--port <n>] [--threads <n>] [--duration <n>]\n", prog);
+    std::printf("usage: %s --rps <n> [--port <n>] [--threads <n>] [--duration <n>] [--normal]\n", prog);
     std::printf("  --rps      requests per second (required)\n");
     std::printf("  --port     target port (default 8080)\n");
     std::printf("  --threads  worker threads (default 4)\n");
-    std::printf("  --duration seconds (default 300, hard max 300)\n");
+    std::printf("  --duration seconds (default 300, hard max 300; 0 = run until SIGTERM)\n");
+    std::printf("  --normal   baseline mode: thread i sends from fixed 10.0.0.<i+1>\n");
 }
 
 bool parse_args(int argc, char* argv[], Options& opts) {
@@ -94,10 +96,12 @@ bool parse_args(int argc, char* argv[], Options& opts) {
             if (!v) return false;
             unsigned long parsed = 0;
             if (!parse_ulong(v, &parsed)) {
-                std::fprintf(stderr, "--duration must be a positive integer\n");
+                std::fprintf(stderr, "--duration must be a non-negative integer\n");
                 return false;
             }
             opts.duration_secs = static_cast<size_t>(parsed);
+        } else if (arg == "--normal") {
+            opts.normal = true;
         } else {
             std::fprintf(stderr, "unknown flag: %s\n", arg.c_str());
             return false;
@@ -106,15 +110,15 @@ bool parse_args(int argc, char* argv[], Options& opts) {
     if (opts.rps == 0) { std::fprintf(stderr, "--rps is required and must be > 0\n"); return false; }
     if (opts.threads == 0 || opts.threads > 64) { std::fprintf(stderr, "--threads must be 1..64\n"); return false; }
     if (opts.port == 0) { std::fprintf(stderr, "--port must be 1..65535\n"); return false; }
-    if (opts.duration_secs == 0 || opts.duration_secs > 300) {
-        std::fprintf(stderr, "--duration must be 1..300 (hard cap)\n");
+    if (opts.duration_secs > 300) {
+        std::fprintf(stderr, "--duration must be 0..300 (0 = indefinite)\n");
         return false;
     }
     return true;
 }
 
-void worker(uint16_t port, long ns_per_req, std::atomic<uint64_t>& sent,
-            std::atomic<uint64_t>& failed) {
+void worker(uint16_t port, long ns_per_req, int vip_host,
+            std::atomic<uint64_t>& sent, std::atomic<uint64_t>& failed) {
     std::random_device rd;
     std::mt19937 gen(rd());
     std::uniform_int_distribution<int> host(1, 254);
@@ -137,8 +141,9 @@ void worker(uint16_t port, long ns_per_req, std::atomic<uint64_t>& sent,
             failed.fetch_add(1, std::memory_order_relaxed);
             continue;
         }
+        int chosen = (vip_host > 0) ? vip_host : host(gen);
         char line[32];
-        int n = std::snprintf(line, sizeof(line), "VIP:10.0.0.%d\n", host(gen));
+        int n = std::snprintf(line, sizeof(line), "VIP:10.0.0.%d\n", chosen);
         if (send(fd, line, static_cast<size_t>(n), 0) == n) {
             sent.fetch_add(1, std::memory_order_relaxed);
         } else {
@@ -169,23 +174,33 @@ int main(int argc, char* argv[]) {
     long ns_per_req = 1000000000L / static_cast<long>(per_thread_rps);
 
     std::printf("ddos_botnet: port %u, threads %zu, target %zu rps"
-                " (actual ~%zu), duration %zu s\n",
+                " (actual ~%zu), duration %zu s%s\n",
                 opts.port, opts.threads, opts.rps,
-                per_thread_rps * opts.threads, opts.duration_secs);
+                per_thread_rps * opts.threads, opts.duration_secs,
+                opts.normal ? ", normal mode" : "");
 
     std::atomic<uint64_t> sent{0}, failed{0};
     std::vector<std::thread> workers;
     workers.reserve(opts.threads);
     for (size_t i = 0; i < opts.threads; ++i) {
-        workers.emplace_back(worker, opts.port, ns_per_req,
+        // normal mode pins thread i to a stable 10.0.0.<i+1> identity
+        int vip_host = opts.normal ? static_cast<int>(i + 1) : 0;
+        workers.emplace_back(worker, opts.port, ns_per_req, vip_host,
                              std::ref(sent), std::ref(failed));
     }
 
-    auto deadline = std::chrono::steady_clock::now() +
-                    std::chrono::seconds(opts.duration_secs);
-    while (!g_stop.load(std::memory_order_relaxed) &&
-           std::chrono::steady_clock::now() < deadline) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    if (opts.duration_secs == 0) {
+        // baseline mode: persist until SIGTERM/SIGINT
+        while (!g_stop.load(std::memory_order_relaxed)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+    } else {
+        auto deadline = std::chrono::steady_clock::now() +
+                        std::chrono::seconds(opts.duration_secs);
+        while (!g_stop.load(std::memory_order_relaxed) &&
+               std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
     }
     g_stop.store(true);
 

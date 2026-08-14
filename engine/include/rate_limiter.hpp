@@ -37,6 +37,10 @@ public:
     void set_enabled(bool on);
     bool enabled() const;
 
+    // Runtime algorithm switch (token bucket <-> sliding window).
+    void set_algorithm(RateLimiterConfig::Algorithm algo);
+    RateLimiterConfig::Algorithm algorithm() const;
+
     // Permanent ban/unban. Ban is refused (returns false) for an invalid
     // address; unban is refused when the vip is not currently banned.
     bool manual_ban(const std::string& vip);
@@ -68,4 +72,5 @@ private:
     std::deque<RecentBlock> recent_blocks_;
     std::atomic<uint64_t> calls_since_prune_{0};
     std::atomic<bool> enabled_{true};
+    std::atomic<int> algorithm_{static_cast<int>(RateLimiterConfig::Algorithm::kTokenBucket)};
 };

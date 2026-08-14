@@ -46,3 +46,25 @@ describe("index.html dual-tab shell", () => {
     expect(css).toMatch(/\.tab-btn\.active\s*\{/);
   });
 });
+
+describe("index.html admin sidebar (Ticket 8)", () => {
+  it("has the persistent sidebar with all six controls", () => {
+    expect(html).toContain('id="admin-sidebar"');
+    for (const id of ["baseline-toggle", "bot-count", "attack-rps",
+                      "attack-duration", "algorithm-select", "emergency-stop"]) {
+      expect(html).toContain(`id="${id}"`);
+    }
+  });
+
+  it("removed the old header control buttons", () => {
+    // controls moved into the sidebar: header must not duplicate launch
+    const header = html.match(/<header[\s\S]*?<\/header>/)?.[0] ?? "";
+    expect(header).not.toContain("launch-attack");
+  });
+
+  it("bot count and rps sliders respect the sidebar caps", () => {
+    expect(html).toMatch(/id="bot-count"[^>]*min="1" max="32"/);
+    expect(html).toMatch(/id="attack-rps"[^>]*min="10" max="200"/);
+    expect(html).toMatch(/id="attack-duration"[^>]*min="5" max="60"/);
+  });
+});

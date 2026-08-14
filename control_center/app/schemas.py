@@ -1,5 +1,6 @@
 from __future__ import annotations
 import ipaddress
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -80,6 +81,15 @@ class AttackRequest(BaseModel):
 class MitigationRequest(BaseModel):
     enabled: bool
 
+
+class AlgorithmRequest(BaseModel):
+    algorithm: Literal["token_bucket", "sliding_window"]
+
+
+class BaselineRequest(BaseModel):
+    enabled: bool
+    bots: int = Field(default=8, ge=1, le=32)
+
 class VipBanRequest(BaseModel):
     vip: str
 
@@ -102,6 +112,10 @@ class ControlResponse(BaseModel):
 
 class ControlStatus(BaseModel):
     mitigation_on: bool = True
+    algorithm: str = "token_bucket"
     attack_running: bool = False
     pid: int = 0
+    baseline_running: bool = False
+    baseline_bots: int = 0
+    attack_params: dict | None = None
     engine_reachable: bool = True

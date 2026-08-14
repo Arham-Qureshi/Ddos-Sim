@@ -5,12 +5,13 @@ import {
   floorCountdown,
   WINDOW_CAPACITY,
 } from "./telemetry.js";
+import { initTabs } from "./tabs.js";
+import { initAdminPanel } from "./admin_panel.js";
 
 const STALE_MS = 2500; // mirror backend stale_threshold_s
 const WS_TICK_MS = 500; // server pushes every 0.5s
 const WINDOW_MS = WINDOW_CAPACITY * WS_TICK_MS; // fixed 60s rolling window
 const MAX_RECONNECT_BACKOFF = 8000;
-const ATTACK_PARAMS = { rps: 200, threads: 4, duration: 10 };
 
 const state = {
   series: null,
@@ -32,6 +33,7 @@ const state = {
   mitigationOn: true,
   lastAttackAt: 0,
   seedRendered: false,
+  activeTab: "command-center", // visible tab; only it repaints (Ticket 9)
 };
 
 const $ = (id) => document.getElementById(id);
@@ -61,6 +63,14 @@ const els = {
   vipBan: $("vip-ban"),
   vipUnban: $("vip-unban"),
   toast: $("toast"),
+  sidebarRps: $("attack-rps"),
+  sidebarRpsVal: $("attack-rps-val"),
+  sidebarBots: $("bot-count"),
+  sidebarBotsVal: $("bot-count-val"),
+  sidebarDuration: $("attack-duration"),
+  sidebarBaseline: $("baseline-toggle"),
+  sidebarAlgorithm: $("algorithm-select"),
+  sidebarEmergency: $("emergency-stop"),
 };
 
 // ---- status pill + freshness gauge ----
@@ -157,6 +167,7 @@ function buildChartOptions() {
 // frame (paint) so the axis AND the line tips glide at 60fps between ticks.
 function paint(now) {
   if (!state.series || !state.chart) return;
+  if (state.activeTab !== "command-center") return; // hidden tab: keep ingesting, skip repaint
   const patch = {
     xAxis: { min: now - WINDOW_MS, max: now },
     series: [],
@@ -292,7 +303,8 @@ function handleAttackWindowChange() {
   // called after attack state flips; maintain shading + events
   if (state.attackActive) {
     state.attackWindows.push({ startAt: Date.now(), endAt: null });
-    pushEvent("attack", `attack launched @ ${ATTACK_PARAMS.rps} rps · ${ATTACK_PARAMS.duration}s`);
+    const p = panel.getParams();
+    pushEvent("attack", `attack launched @ ${p.rps} rps · ${p.duration}s`);
   } else {
     const open = state.attackWindows[state.attackWindows.length - 1];
     if (open && open.endAt == null) open.endAt = Date.now();
@@ -473,6 +485,8 @@ async function syncControlState() {
   if (state.mitigationOn !== wasMitigation) {
     pushEvent("mitigation", `rate-limit mitigation → ${state.mitigationOn ? "on" : "off"}`);
   }
+  // reflect the engine's live algorithm / baseline onto the sidebar
+  if (status) panel.setStatus(status);
   updateControlUi();
 }
 
@@ -481,24 +495,28 @@ function updateControlUi() {
   els.attackBtn.disabled = down || state.attackActive;
   els.stopBtn.disabled = down || !state.attackActive;
   els.mitigationBtn.disabled = down;
+  els.sidebarEmergency.disabled = down;
+  els.sidebarBaseline.disabled = down;
+  els.sidebarAlgorithm.disabled = down;
+  els.sidebarBots.disabled = down;
   els.vipBan.disabled = down;
   els.vipUnban.disabled = down;
 
   if (state.mitigationOn) {
     els.mitigationBtn.textContent = "Mitigation: On";
-    els.mitigationBtn.className = "btn-focus mono rounded-md border border-emerald-700/60 bg-emerald-950/40 px-4 py-2 text-sm font-semibold uppercase tracking-widest text-emerald-300 transition-colors hover:border-emerald-500 disabled:cursor-not-allowed disabled:opacity-40";
+    els.mitigationBtn.className = "btn-focus mono rounded-md border border-emerald-700/60 bg-emerald-950/40 px-3 py-1 text-[10px] font-semibold uppercase tracking-widest text-emerald-300 transition-colors hover:border-emerald-500 disabled:cursor-not-allowed disabled:opacity-40";
   } else {
     els.mitigationBtn.textContent = "Mitigation: Off";
-    els.mitigationBtn.className = "btn-focus mono rounded-md border border-amber-700/60 bg-amber-950/40 px-4 py-2 text-sm font-semibold uppercase tracking-widest text-amber-300 transition-colors hover:border-amber-500 disabled:cursor-not-allowed disabled:opacity-40";
+    els.mitigationBtn.className = "btn-focus mono rounded-md border border-amber-700/60 bg-amber-950/40 px-3 py-1 text-[10px] font-semibold uppercase tracking-widest text-amber-300 transition-colors hover:border-amber-500 disabled:cursor-not-allowed disabled:opacity-40";
   }
 }
 
-function handleAttack() {
+function handleAttack(payload) {
   const now = Date.now();
   if (now - state.lastAttackAt < 5000) return; // debounce on top of backend cooldown
   state.lastAttackAt = now;
   toast("launching attack…");
-  controlRequest("POST", "/api/control/attack", ATTACK_PARAMS).then(({ status, data }) => {
+  controlRequest("POST", "/api/control/attack", payload).then(({ status, data }) => {
     if (status === 200 && data?.ok) {
       state.attackActive = true;
       handleAttackWindowChange();
@@ -547,6 +565,61 @@ async function handleMitigation() {
   syncControlState();
 }
 
+async function handleBaseline({ enabled, bots }) {
+  toast(`baseline → ${enabled ? "on" : "off"}…`);
+  try {
+    const { status, data } = await controlRequest("POST", "/api/control/baseline", { enabled, bots });
+    if (status === 503) {
+      state.engineReachable = false;
+      els.sidebarBaseline.checked = !enabled; // revert the flip
+    } else {
+      toast(replyText(data) || (enabled ? "baseline started" : "baseline stopped"));
+      pushEvent("attack", `baseline traffic ${enabled ? "on" : "off"} (${bots} bots)`);
+    }
+  } catch {
+    state.engineReachable = false;
+    els.sidebarBaseline.checked = !enabled;
+    toast("engine offline — start ddos_server");
+  }
+  syncControlState();
+}
+
+async function handleAlgorithm(alg) {
+  toast(`algorithm → ${alg}…`);
+  try {
+    const { status, data } = await controlRequest("POST", "/api/control/algorithm", { algorithm: alg });
+    if (status === 503) {
+      state.engineReachable = false;
+      syncControlState(); // will reset the selector to the engine truth
+    } else {
+      toast(replyText(data) || `algorithm set to ${alg}`);
+      pushEvent("mitigation", `rate-limit algorithm → ${alg}`);
+    }
+  } catch {
+    state.engineReachable = false;
+    toast("engine offline — start ddos_server");
+  }
+  syncControlState();
+}
+
+async function handleEmergency() {
+  toast("emergency stop — killing attack & baseline…");
+  try {
+    const { status, data } = await controlRequest("POST", "/api/control/emergency-stop");
+    if (status === 503) {
+      state.engineReachable = false;
+      toast("engine offline — start ddos_server");
+    } else {
+      toast(replyText(data) || "emergency stop issued");
+      pushEvent("stop", "emergency stop — attack & baseline halted");
+    }
+  } catch {
+    state.engineReachable = false;
+    toast("engine offline — start ddos_server");
+  }
+  syncControlState();
+}
+
 function handleVip(actionStr) {
   const vip = (els.vipInput.value || "").trim();
   if (!/^(\d{1,3}\.){3}\d{1,3}$/.test(vip) || vip === "127.0.0.1") {
@@ -584,14 +657,47 @@ state.chart.setOption(buildChartOptions()); // structural options up-front
 renderLogWith([]);
 renderEvents();
 
+// admin sidebar (Ticket 8): actions hand back into dashboard's network layer
+const panel = initAdminPanel({
+  rps: els.sidebarRps,
+  rpsVal: els.sidebarRpsVal,
+  bots: els.sidebarBots,
+  botsVal: els.sidebarBotsVal,
+  duration: els.sidebarDuration,
+  baseline: els.sidebarBaseline,
+  algorithm: els.sidebarAlgorithm,
+  emergency: els.sidebarEmergency,
+  launch: els.attackBtn,
+  stop: els.stopBtn,
+  mitigation: els.mitigationBtn,
+}, {
+  launch: (payload) => handleAttack(payload),
+  stop: () => handleStop(),
+  mitigation: () => handleMitigation(),
+  baseline: (b) => handleBaseline(b),
+  algorithm: (alg) => handleAlgorithm(alg),
+  emergency: () => handleEmergency(),
+});
+
+// tab shell: only the visible tab repaints; going back to the command center
+// needs an explicit resize because echarts measured the panel while hidden
+initTabs(document);
+document.addEventListener("tabchange", (e) => {
+  state.activeTab = e.detail.tab;
+  if (state.activeTab === "command-center") {
+    state.chart && state.chart.resize();
+    state.sparkConns && state.sparkConns.resize();
+    state.sparkCpu && state.sparkCpu.resize();
+    render(); // repaint immediately after becoming visible
+  }
+});
+state.activeTab = "command-center";
+
 async function init() {
   await resolveApiBase();
   connect();
   updateControlUi();
   syncControlState();
-  els.attackBtn.addEventListener("click", handleAttack);
-  els.stopBtn.addEventListener("click", handleStop);
-  els.mitigationBtn.addEventListener("click", handleMitigation);
   els.vipBan.addEventListener("click", () => handleVip("ban"));
   els.vipUnban.addEventListener("click", () => handleVip("unban"));
   els.vipInput.addEventListener("keydown", (e) => {
