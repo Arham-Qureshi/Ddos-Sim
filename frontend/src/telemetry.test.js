@@ -4,6 +4,7 @@ import {
   seedSeries,
   ingestFrame,
   chartData,
+  chartDataLive,
   floorCountdown,
 } from "../src/telemetry.js";
 
@@ -78,6 +79,51 @@ describe("chartData", () => {
     expect(chartData({ attack: buf }, "attack")).toEqual([
       [1000, 10],
       [2000, 20],
+    ]);
+  });
+});
+
+describe("chartDataLive", () => {
+  it("returns [] when series is missing", () => {
+    expect(chartDataLive(null, "normal", 5000)).toEqual([]);
+  });
+
+  it("leaves points untouched when now has not passed the last point", () => {
+    const buf = new RingBuffer();
+    buf.push({ ts: 1, value: 10 });
+    buf.push({ ts: 2, value: 20 });
+    expect(chartDataLive({ attack: buf }, "attack", 1500)).toEqual([
+      [1000, 10],
+      [2000, 20],
+    ]);
+  });
+
+  it("eases the live tip instead of projecting a hard straight slope", () => {
+    const buf = new RingBuffer();
+    buf.push({ ts: 1, value: 10 });
+    buf.push({ ts: 2, value: 20 }); // slope 10 per second
+    const pts = chartDataLive({ attack: buf }, "attack", 2500);
+    expect(pts.slice(0, 2)).toEqual([
+      [1000, 10],
+      [2000, 20],
+    ]);
+    // exponential ease: 20 + 10 * 0.25 * (1 - exp(-500/250)) ~ 22.16, not 25
+    expect(pts[2][0]).toBe(2500);
+    expect(pts[2][1]).toBeCloseTo(22.16, 2);
+  });
+
+  it("holds flat with a single point and clamps tips at zero", () => {
+    const buf = new RingBuffer();
+    buf.push({ ts: 1, value: 0 });
+    expect(chartDataLive({ attack: buf }, "attack", 3000)).toEqual([
+      [1000, 0],
+      [3000, 0],
+    ]);
+    buf.push({ ts: 2, value: 0 });
+    expect(chartDataLive({ attack: buf }, "attack", 4000)).toEqual([
+      [1000, 0],
+      [2000, 0],
+      [4000, 0],
     ]);
   });
 });
