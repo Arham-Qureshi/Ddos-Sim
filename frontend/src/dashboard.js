@@ -5,6 +5,7 @@ import {
   floorCountdown,
   WINDOW_CAPACITY,
 } from "./telemetry.js";
+import { initTabs } from "./tabs.js";
 
 const STALE_MS = 2500; // mirror backend stale_threshold_s
 const WS_TICK_MS = 500; // server pushes every 0.5s
@@ -32,6 +33,7 @@ const state = {
   mitigationOn: true,
   lastAttackAt: 0,
   seedRendered: false,
+  activeTab: "command-center", // visible tab; only it repaints (Ticket 9)
 };
 
 const $ = (id) => document.getElementById(id);
@@ -157,6 +159,7 @@ function buildChartOptions() {
 // frame (paint) so the axis AND the line tips glide at 60fps between ticks.
 function paint(now) {
   if (!state.series || !state.chart) return;
+  if (state.activeTab !== "command-center") return; // hidden tab: keep ingesting, skip repaint
   const patch = {
     xAxis: { min: now - WINDOW_MS, max: now },
     series: [],
@@ -583,6 +586,20 @@ state.chart = echarts.init(els.chart);
 state.chart.setOption(buildChartOptions()); // structural options up-front
 renderLogWith([]);
 renderEvents();
+
+// tab shell: only the visible tab repaints; going back to the command center
+// needs an explicit resize because echarts measured the panel while hidden
+initTabs(document);
+document.addEventListener("tabchange", (e) => {
+  state.activeTab = e.detail.tab;
+  if (state.activeTab === "command-center") {
+    state.chart && state.chart.resize();
+    state.sparkConns && state.sparkConns.resize();
+    state.sparkCpu && state.sparkCpu.resize();
+    render(); // repaint immediately after becoming visible
+  }
+});
+state.activeTab = "command-center";
 
 async function init() {
   await resolveApiBase();
