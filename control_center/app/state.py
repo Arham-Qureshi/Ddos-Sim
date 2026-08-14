@@ -86,6 +86,9 @@ class AppState:
                     self._settings.rate_limit_block_seconds
                     - (now_ms - b.blocked_at_ms) / 1000.0,
                 )
+            # once a temp ban's countdown hits zero it has been lifted: drop it
+            if remaining is not None and remaining <= 0:
+                continue
             snap.append(
                 BlockRecord(
                     vip=b.vip,
