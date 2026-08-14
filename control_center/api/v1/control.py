@@ -5,7 +5,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from api.deps import get_settings, get_state
 from app.config import Settings
 from app.schemas import (
+    AlgorithmRequest,
     AttackRequest,
+    BaselineRequest,
     ControlResponse,
     ControlStatus,
     MitigationRequest,
@@ -25,7 +27,9 @@ def _status_help(reply: str) -> dict:
         except ValueError:
             pass
     # default on anything unexpected
-    return {"mitigation": True, "attack_running": False, "pid": 0}
+    return {"mitigation": True, "attack_running": False, "pid": 0,
+            "algorithm": "token_bucket", "baseline_running": False,
+            "baseline_bots": 0}
 
 
 async def _send_cmd(settings: Settings, cmd: str) -> ControlResponse:
@@ -56,8 +60,12 @@ async def control_status(
     d = _status_help(reply)
     return ControlStatus(
         mitigation_on=bool(d.get("mitigation", True)),
+        algorithm=d.get("algorithm", "token_bucket"),
         attack_running=bool(d.get("attack_running", False)),
         pid=int(d.get("pid", 0)),
+        baseline_running=bool(d.get("baseline_running", False)),
+        baseline_bots=int(d.get("baseline_bots", 0)),
+        attack_params=d.get("attack_params"),
     )
 
 
@@ -92,6 +100,30 @@ async def control_mitigation(
     settings: Settings = Depends(get_settings),
 ) -> ControlResponse:
     return await _send_cmd(settings, f"CMD_SET_MITIGATION {'on' if body.enabled else 'off'}")
+
+
+@router.post("/control/algorithm", response_model=ControlResponse)
+async def control_algorithm(
+    body: AlgorithmRequest,
+    settings: Settings = Depends(get_settings),
+) -> ControlResponse:
+    return await _send_cmd(settings, f"CMD_SET_ALGORITHM {body.algorithm}")
+
+
+@router.post("/control/baseline", response_model=ControlResponse)
+async def control_baseline(
+    body: BaselineRequest,
+    settings: Settings = Depends(get_settings),
+) -> ControlResponse:
+    cmd = f"CMD_SET_BASELINE on {body.bots}" if body.enabled else "CMD_SET_BASELINE off"
+    return await _send_cmd(settings, cmd)
+
+
+@router.post("/control/emergency-stop", response_model=ControlResponse)
+async def control_emergency_stop(
+    settings: Settings = Depends(get_settings),
+) -> ControlResponse:
+    return await _send_cmd(settings, "CMD_EMERGENCY_STOP")
 
 
 @router.post("/control/vips/ban", response_model=ControlResponse)
