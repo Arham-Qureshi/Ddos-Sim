@@ -1,9 +1,10 @@
 <!doctype html>
 <html lang="en">
+
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>WATCHTOWER — DDoS Sim Console</title>
+  <title>WATCHTOWER | DDoS Sim Console</title>
   <link rel="stylesheet" href="vendor/tailwind.min.css" />
   <style>
     :root {
@@ -17,42 +18,121 @@
       --attack: #f59e0b;
       --blocked: #fb7185;
     }
-    html, body { height: 100%; }
+
+    html,
+    body {
+      height: 100%;
+    }
+
     body {
       background: var(--bg);
       color: var(--txt);
       font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     }
-    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; }
-    .panel { background: var(--panel); border: 1px solid var(--line); }
-    .btn-focus:focus-visible { outline: 2px solid var(--attack); outline-offset: 2px; }
-    .flash-row { animation: rowflash 0.9s ease-out; }
-    @keyframes rowflash { 0% { background: rgba(245, 158, 11, 0.28); } 100% { background: transparent; } }
-    .pulse-dot { animation: pulsedot 1.6s ease-in-out infinite; }
-    @keyframes pulsedot { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+    }
+
+    .btn-focus:focus-visible {
+      outline: 2px solid var(--attack);
+      outline-offset: 2px;
+    }
+
+    .flash-row {
+      animation: rowflash 0.9s ease-out;
+    }
+
+    @keyframes rowflash {
+      0% {
+        background: rgba(245, 158, 11, 0.28);
+      }
+
+      100% {
+        background: transparent;
+      }
+    }
+
+    .pulse-dot {
+      animation: pulsedot 1.6s ease-in-out infinite;
+    }
+
+    @keyframes pulsedot {
+
+      0%,
+      100% {
+        opacity: 1;
+      }
+
+      50% {
+        opacity: 0.35;
+      }
+    }
+
     /* hand-added utilities the vendored tailwind v2 build can't JIT
        (arbitrary values below are otherwise silently dropped -> e.g. the
        chart div ends up 0px tall and echarts draws nothing) */
-    .tracking-\[0\.3em\] { letter-spacing: 0.3em; }
-    .h-\[340px\] { height: 340px; }
-    .h-\[56px\] { height: 56px; }
-    .max-h-\[280px\] { max-height: 280px; }
-    .max-h-\[220px\] { max-height: 220px; }
-    .text-\[10px\] { font-size: 10px; }
-    .bg-\[\#0a0e14\] { background-color: #0a0e14; }
-    .bg-\[\#0f1520\] { background-color: #0f1520; }
-    .bg-\[\#131b29\] { background-color: #131b29; }
-    .toast { transition: opacity 0.25s ease, transform 0.25s ease; }
-    .toast.hide { opacity: 0; transform: translateY(4px); }
+    .tracking-\[0\.3em\] {
+      letter-spacing: 0.3em;
+    }
+
+    .h-\[340px\] {
+      height: 340px;
+    }
+
+    .h-\[56px\] {
+      height: 56px;
+    }
+
+    .max-h-\[280px\] {
+      max-height: 280px;
+    }
+
+    .max-h-\[220px\] {
+      max-height: 220px;
+    }
+
+    .text-\[10px\] {
+      font-size: 10px;
+    }
+
+    .bg-\[\#0a0e14\] {
+      background-color: #0a0e14;
+    }
+
+    .bg-\[\#0f1520\] {
+      background-color: #0f1520;
+    }
+
+    .bg-\[\#131b29\] {
+      background-color: #131b29;
+    }
+
+    .toast {
+      transition: opacity 0.25s ease, transform 0.25s ease;
+    }
+
+    .toast.hide {
+      opacity: 0;
+      transform: translateY(4px);
+    }
   </style>
 </head>
+
 <body class="min-h-full">
   <div class="mx-auto max-w-7xl px-4 py-5 lg:px-6">
     <!-- header -->
     <header class="flex flex-wrap items-center gap-4">
       <div class="flex items-center gap-3">
         <div id="status-dot" class="h-3 w-3 rounded-full bg-slate-600 pulse-dot" aria-hidden="true"></div>
-        <span id="status-text" class="mono text-sm uppercase tracking-widest text-slate-500" role="status" aria-live="polite">connecting</span>
+        <span id="status-text" class="mono text-sm uppercase tracking-widest text-slate-500" role="status"
+          aria-live="polite">connecting</span>
       </div>
       <div class="flex-1 text-center">
         <h1 class="mono text-lg font-bold uppercase tracking-[0.3em] text-slate-200">Watchtower</h1>
@@ -60,18 +140,18 @@
       </div>
       <div class="flex items-center gap-2">
         <button id="mitigation-toggle"
-                class="btn-focus mono rounded-md border border-slate-700 bg-slate-800/40 px-4 py-2 text-sm font-semibold uppercase tracking-widest text-slate-300 transition-colors hover:border-slate-500 disabled:cursor-not-allowed disabled:opacity-40"
-                title="Toggle the C++ rate-limiter on or off">
+          class="btn-focus mono rounded-md border border-slate-700 bg-slate-800/40 px-4 py-2 text-sm font-semibold uppercase tracking-widest text-slate-300 transition-colors hover:border-slate-500 disabled:cursor-not-allowed disabled:opacity-40"
+          title="Toggle the C++ rate-limiter on or off">
           Mitigation: On
         </button>
         <button id="stop-attack"
-                class="btn-focus mono rounded-md border border-rose-800/60 bg-rose-950/40 px-4 py-2 text-sm font-semibold uppercase tracking-widest text-rose-400 transition-colors hover:border-rose-600 disabled:cursor-not-allowed disabled:opacity-40"
-                title="Stop the running virtual botnet">
+          class="btn-focus mono rounded-md border border-rose-800/60 bg-rose-950/40 px-4 py-2 text-sm font-semibold uppercase tracking-widest text-rose-400 transition-colors hover:border-rose-600 disabled:cursor-not-allowed disabled:opacity-40"
+          title="Stop the running virtual botnet">
           Stop Attack
         </button>
         <button id="launch-attack"
-                class="btn-focus mono rounded-md border border-red-900/60 bg-red-950/40 px-5 py-2 text-sm font-semibold uppercase tracking-widest text-red-400 transition-colors hover:border-red-600 hover:bg-red-900/40 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-red-900/60 disabled:hover:bg-red-950/40"
-                title="Spawn a virtual botnet burst through the C++ control socket">
+          class="btn-focus mono rounded-md border border-red-900/60 bg-red-950/40 px-5 py-2 text-sm font-semibold uppercase tracking-widest text-red-400 transition-colors hover:border-red-600 hover:bg-red-900/40 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-red-900/60 disabled:hover:bg-red-950/40"
+          title="Spawn a virtual botnet burst through the C++ control socket">
           Launch Attack
         </button>
       </div>
@@ -106,22 +186,28 @@
       <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
         <h2 class="mono text-sm font-semibold uppercase tracking-widest text-slate-300">Live Traffic</h2>
         <div class="flex gap-4 text-xs">
-          <span class="flex items-center gap-1.5"><span class="h-2 w-2 rounded-full" style="background:var(--normal)"></span>normal</span>
-          <span class="flex items-center gap-1.5"><span class="h-2 w-2 rounded-full" style="background:var(--attack)"></span>attack</span>
-          <span class="flex items-center gap-1.5"><span class="h-2 w-2 rounded-full" style="background:var(--blocked)"></span>blocked</span>
-          <span class="flex items-center gap-1.5"><span class="h-2 w-2 rounded-full" style="background:var(--attack)"></span>limit</span>
+          <span class="flex items-center gap-1.5"><span class="h-2 w-2 rounded-full"
+              style="background:var(--normal)"></span>normal</span>
+          <span class="flex items-center gap-1.5"><span class="h-2 w-2 rounded-full"
+              style="background:var(--attack)"></span>attack</span>
+          <span class="flex items-center gap-1.5"><span class="h-2 w-2 rounded-full"
+              style="background:var(--blocked)"></span>blocked</span>
+          <span class="flex items-center gap-1.5"><span class="h-2 w-2 rounded-full"
+              style="background:var(--attack)"></span>limit</span>
         </div>
       </div>
       <div id="traffic-chart" class="h-[340px] w-full"></div>
-      <p class="mt-2 text-xs text-slate-500">dashed amber line = rate-limit threshold · amber band = attack windows · rose spikes = blocked attempts</p>
+      <p class="mt-2 text-xs text-slate-500">dashed amber line = rate-limit threshold · amber band = attack windows ·
+        rose spikes = blocked attempts</p>
     </section>
 
     <!-- metrics + security log -->
     <section class="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-3">
       <div class="grid grid-cols-2 gap-4 lg:col-span-1">
         <div class="panel rounded-lg p-4">
-          <p class="text-xs uppercase tracking-widest text-slate-500">Active conns</p>
+          <p class="text-xs uppercase tracking-widest text-slate-500">Conns/s</p>
           <p id="metric-conns" class="mono mt-1 text-2xl text-slate-100">0</p>
+          <p class="text-xs text-slate-500">connections accepted per second</p>
           <div id="spark-conns" class="h-[56px] w-full"></div>
         </div>
         <div class="panel rounded-lg p-4">
@@ -142,17 +228,19 @@
       </div>
 
       <div class="panel rounded-lg lg:col-span-2">
-        <h2 class="mono border-b border-slate-800 px-4 py-3 text-sm font-semibold uppercase tracking-widest text-slate-300">Security Log</h2>
+        <h2
+          class="mono border-b border-slate-800 px-4 py-3 text-sm font-semibold uppercase tracking-widest text-slate-300">
+          Security Log</h2>
         <div class="flex items-center gap-2 border-b border-slate-800 px-4 py-2">
           <span class="text-xs uppercase tracking-widest text-slate-500">VIP director</span>
           <input id="vip-input" type="text" inputmode="numeric" maxlength="15" pattern="[0-9.]*"
-                 placeholder="e.g. 10.0.0.99"
-                 class="mono w-40 rounded border border-slate-700 bg-[#0a0e14] px-2 py-1 text-xs text-slate-200 placeholder-slate-600 focus:border-slate-500 focus:outline-none"
-                 aria-label="virtual IP to ban or unban" />
+            placeholder="e.g. 10.0.0.99"
+            class="mono w-40 rounded border border-slate-700 bg-[#0a0e14] px-2 py-1 text-xs text-slate-200 placeholder-slate-600 focus:border-slate-500 focus:outline-none"
+            aria-label="virtual IP to ban or unban" />
           <button id="vip-ban"
-                  class="btn-focus mono rounded border border-slate-700 bg-slate-800/40 px-3 py-1 text-[10px] font-semibold uppercase tracking-widest text-slate-300 transition-colors hover:border-slate-500 disabled:cursor-not-allowed disabled:opacity-40">Ban</button>
+            class="btn-focus mono rounded border border-slate-700 bg-slate-800/40 px-3 py-1 text-[10px] font-semibold uppercase tracking-widest text-slate-300 transition-colors hover:border-slate-500 disabled:cursor-not-allowed disabled:opacity-40">Ban</button>
           <button id="vip-unban"
-                  class="btn-focus mono rounded border border-slate-700 bg-slate-800/40 px-3 py-1 text-[10px] font-semibold uppercase tracking-widest text-slate-300 transition-colors hover:border-slate-500 disabled:cursor-not-allowed disabled:opacity-40">Unban</button>
+            class="btn-focus mono rounded border border-slate-700 bg-slate-800/40 px-3 py-1 text-[10px] font-semibold uppercase tracking-widest text-slate-300 transition-colors hover:border-slate-500 disabled:cursor-not-allowed disabled:opacity-40">Unban</button>
         </div>
         <div class="max-h-[220px] overflow-y-auto">
           <table class="w-full text-sm">
@@ -174,14 +262,18 @@
     <section class="panel mt-5 rounded-lg p-4">
       <h2 class="mono mb-2 text-sm font-semibold uppercase tracking-widest text-slate-300">Activity</h2>
       <ul id="event-log" class="max-h-[220px] divide-y divide-slate-800/40 overflow-y-auto">
-        <li id="event-empty" class="px-4 py-1.5 text-xs text-slate-600">no events yet — launch an attack or ban a VIP</li>
+        <li id="event-empty" class="px-4 py-1.5 text-xs text-slate-600">no events yet — launch an attack or ban a VIP
+        </li>
       </ul>
     </section>
   </div>
 
-  <div id="toast" class="toast mono pointer-events-none fixed bottom-5 right-5 hidden rounded-md border border-slate-700 bg-[#131b29] px-4 py-2 text-xs uppercase tracking-widest text-slate-200"></div>
+  <div id="toast"
+    class="toast mono pointer-events-none fixed bottom-5 right-5 hidden rounded-md border border-slate-700 bg-[#131b29] px-4 py-2 text-xs uppercase tracking-widest text-slate-200">
+  </div>
 
   <script src="vendor/echarts.min.js"></script>
   <script type="module" src="src/dashboard.js"></script>
 </body>
+
 </html>
