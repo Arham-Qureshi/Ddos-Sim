@@ -25,3 +25,24 @@ describe("index.html arbitrary utility classes", () => {
     expect(missing).toEqual([]);
   });
 });
+
+describe("index.html dual-tab shell", () => {
+  it("has a tab bar with both tab buttons", () => {
+    expect(html).toContain('data-tab="threat-map"');
+    expect(html).toContain('data-tab="command-center"');
+  });
+
+  it("has both tab panels wired by data attribute", () => {
+    expect(html).toContain('id="threat-map-tab" data-tab-panel="threat-map"');
+    expect(html).toContain('id="command-center-tab" data-tab-panel="command-center"');
+  });
+
+  it("still loads echarts", () => {
+    expect(html).toContain("vendor/echarts.min.js");
+  });
+
+  it("styles the active tab button", () => {
+    const css = `${tailwind}\n${inline}`;
+    expect(css).toMatch(/\.tab-btn\.active\s*\{/);
+  });
+});
