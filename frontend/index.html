@@ -133,12 +133,115 @@
       color: var(--txt);
       box-shadow: inset 0 -2px 0 var(--attack);
     }
+
+    /* ---- sidebar (Ticket 8) ---- */
+    .panel-label {
+      font-size: 10px;
+      letter-spacing: 0.2em;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+
+    .ctrl-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+    }
+
+    .ctrl-val {
+      color: var(--txt);
+      font-variant-numeric: tabular-nums;
+      font-size: 0.875rem;
+    }
+
+    input[type="range"] {
+      width: 100%;
+      accent-color: var(--normal);
+      background: transparent;
+      cursor: pointer;
+    }
+
+    input[type="range"].attack {
+      accent-color: var(--attack);
+    }
+
+    /* master-switch toggle: pill behind a sliding knob */
+    .switch {
+      position: relative;
+      width: 40px;
+      height: 22px;
+      flex: none;
+    }
+
+    .switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .switch .track {
+      position: absolute;
+      inset: 0;
+      border-radius: 9999px;
+      background: #1e293b;
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      transition: background 0.2s ease;
+    }
+
+    .switch .track::before {
+      content: "";
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 16px;
+      height: 16px;
+      border-radius: 9999px;
+      background: #94a3b8;
+      transition: transform 0.2s ease, background 0.2s ease;
+    }
+
+    .switch input:checked + .track {
+      background: rgba(56, 189, 248, 0.35);
+      border-color: rgba(56, 189, 248, 0.6);
+    }
+
+    .switch input:checked + .track::before {
+      transform: translateX(18px);
+      background: var(--normal);
+    }
+
+    select,
+    input[type="number"] {
+      color: var(--txt);
+      background: var(--panel-2);
+      border: 1px solid rgba(148, 163, 184, 0.25);
+      border-radius: 0.375rem;
+      padding: 0.25rem 0.5rem;
+      font-size: 0.75rem;
+    }
+
+    select:focus-visible,
+    input[type="number"]:focus-visible {
+      outline: 2px solid var(--attack);
+      outline-offset: 1px;
+    }
+
+    .emergency {
+      background: rgba(153, 27, 27, 0.55);
+      border: 1px solid rgba(239, 68, 68, 0.7);
+    }
+
+    .emergency:hover:not(:disabled) {
+      background: rgba(185, 28, 28, 0.8);
+      border-color: #ef4444;
+    }
   </style>
 </head>
 
 <body class="min-h-full">
   <div class="mx-auto max-w-7xl px-4 py-5 lg:px-6">
-    <!-- header -->
+    <!-- header: status + title only; controls live in the sidebar (Ticket 8) -->
     <header class="flex flex-wrap items-center gap-4">
       <div class="flex items-center gap-3">
         <div id="status-dot" class="h-3 w-3 rounded-full bg-slate-600 pulse-dot" aria-hidden="true"></div>
@@ -149,27 +252,92 @@
         <h1 class="mono text-lg font-bold uppercase tracking-[0.3em] text-slate-200">Watchtower</h1>
         <p class="text-xs text-slate-500">DDoS attack &amp; prevention simulator — live telemetry</p>
       </div>
-      <div class="flex items-center gap-2">
-        <button id="mitigation-toggle"
-          class="btn-focus mono rounded-md border border-slate-700 bg-slate-800/40 px-4 py-2 text-sm font-semibold uppercase tracking-widest text-slate-300 transition-colors hover:border-slate-500 disabled:cursor-not-allowed disabled:opacity-40"
-          title="Toggle the C++ rate-limiter on or off">
-          Mitigation: On
-        </button>
-        <button id="stop-attack"
-          class="btn-focus mono rounded-md border border-rose-800/60 bg-rose-950/40 px-4 py-2 text-sm font-semibold uppercase tracking-widest text-rose-400 transition-colors hover:border-rose-600 disabled:cursor-not-allowed disabled:opacity-40"
-          title="Stop the running virtual botnet">
-          Stop Attack
-        </button>
-        <button id="launch-attack"
-          class="btn-focus mono rounded-md border border-red-900/60 bg-red-950/40 px-5 py-2 text-sm font-semibold uppercase tracking-widest text-red-400 transition-colors hover:border-red-600 hover:bg-red-900/40 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-red-900/60 disabled:hover:bg-red-950/40"
-          title="Spawn a virtual botnet burst through the C++ control socket">
-          Launch Attack
-        </button>
-      </div>
     </header>
 
+    <!-- persistent admin sidebar (Ticket 8) -->
+    <div class="mt-5 flex flex-col gap-5 lg:flex-row">
+      <aside id="admin-sidebar" aria-label="Admin controls"
+        class="panel w-full shrink-0 rounded-lg p-4 lg:w-72">
+        <p class="panel-label mb-3">Admin Control</p>
+
+        <!-- traffic master -->
+        <div class="mb-4">
+          <div class="ctrl-row">
+            <span class="panel-label">Baseline traffic</span>
+            <label class="switch" title="Toggle baseline normal traffic">
+              <input id="baseline-toggle" type="checkbox" aria-label="baseline normal traffic" />
+              <span class="track"></span>
+            </label>
+          </div>
+          <div class="ctrl-row mt-2">
+            <span class="text-xs text-slate-500">Bot count</span>
+            <span class="ctrl-val mono"><span id="bot-count-val">8</span></span>
+          </div>
+          <input id="bot-count" type="range" min="1" max="32" value="8" class="mt-1" aria-label="bot count" />
+        </div>
+
+        <!-- attack -->
+        <div class="mb-4">
+          <div class="ctrl-row">
+            <span class="text-xs text-slate-500">Intensity (rps)</span>
+            <span class="ctrl-val mono"><span id="attack-rps-val">200</span></span>
+          </div>
+          <input id="attack-rps" type="range" min="10" max="200" value="200" class="attack mt-1"
+            aria-label="attack intensity" />
+          <div class="ctrl-row mt-3">
+            <span class="text-xs text-slate-500">Duration (s)</span>
+            <input id="attack-duration" type="number" min="5" max="60" value="10" class="w-16"
+              aria-label="attack duration" />
+          </div>
+          <div class="mt-3 grid grid-cols-2 gap-2">
+            <button id="launch-attack"
+              class="btn-focus mono rounded-md border border-red-900/60 bg-red-950/40 px-3 py-2 text-xs font-semibold uppercase tracking-widest text-red-400 transition-colors hover:border-red-600 hover:bg-red-900/40 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-red-900/60 disabled:hover:bg-red-950/40"
+              title="Spawn a virtual botnet burst through the C++ control socket">
+              Launch
+            </button>
+            <button id="stop-attack"
+              class="btn-focus mono rounded-md border border-slate-700 bg-slate-800/40 px-3 py-2 text-xs font-semibold uppercase tracking-widest text-slate-300 transition-colors hover:border-slate-500 disabled:cursor-not-allowed disabled:opacity-40"
+              title="Stop the running virtual botnet">
+              Stop
+            </button>
+          </div>
+        </div>
+
+        <!-- mitigation -->
+        <div class="mb-4">
+          <div class="ctrl-row">
+            <span class="panel-label">Mitigation</span>
+            <button id="mitigation-toggle"
+              class="btn-focus mono rounded-md border border-emerald-700/60 bg-emerald-950/40 px-3 py-1 text-[10px] font-semibold uppercase tracking-widest text-emerald-300 transition-colors hover:border-emerald-500 disabled:cursor-not-allowed disabled:opacity-40"
+              title="Toggle the C++ rate-limiter on or off">
+              Mitigation: On
+            </button>
+          </div>
+        </div>
+
+        <!-- algorithm -->
+        <div class="mb-4">
+          <div class="ctrl-row">
+            <span class="panel-label">Algorithm</span>
+            <select id="algorithm-select" aria-label="rate limit algorithm">
+              <option value="token_bucket">Token Bucket</option>
+              <option value="sliding_window">Sliding Window</option>
+            </select>
+          </div>
+          <p class="mt-1 text-[10px] text-slate-600">applies on change — drives the C++ rate limiter</p>
+        </div>
+
+        <!-- danger -->
+        <button id="emergency-stop"
+          class="emergency btn-focus mono w-full rounded-md px-3 py-2.5 text-xs font-bold uppercase tracking-widest text-rose-100 transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+          title="Instantly kill the attack and any baseline traffic">
+          Emergency Stop
+        </button>
+      </aside>
+
+      <main class="min-w-0 flex-1">
     <!-- dual-tab shell (Ticket 9): browser-style view switcher -->
-    <nav id="tab-bar" class="mt-5 flex gap-1 border-b border-slate-800" role="tablist">
+    <nav id="tab-bar" class="flex gap-1 border-b border-slate-800" role="tablist">
       <button data-tab="threat-map" class="tab-btn mono px-4 py-2 text-xs uppercase tracking-widest"
         role="tab" aria-selected="false" aria-controls="threat-map-tab">Threat Map</button>
       <button data-tab="command-center" class="tab-btn active mono px-4 py-2 text-xs uppercase tracking-widest"
@@ -297,6 +465,8 @@
       </ul>
     </section>
     </section><!-- /command-center-tab -->
+      </main>
+    </div><!-- /sidebar + main flex row -->
   </div>
 
   <div id="toast"
