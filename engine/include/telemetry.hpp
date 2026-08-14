@@ -19,6 +19,7 @@ struct TelemetryStats {
     std::atomic<uint64_t> normal_rps{0};
     std::atomic<uint64_t> attack_rps{0};
     std::atomic<uint64_t> blocked_rps{0};
+    std::atomic<uint64_t> connections_per_sec{0};
     std::atomic<uint32_t> cpu_load_pct{0};
 };
 
@@ -47,6 +48,7 @@ private:
     uint64_t last_normal_accepted_ = 0;
     uint64_t last_attack_accepted_ = 0;
     uint64_t last_blocked_accepted_ = 0;
+    uint64_t last_total_accepted_ = 0;
     uint64_t last_cpu_ticks_ = 0;
     uint64_t last_cpu_wall_ms_ = 0;
 };
