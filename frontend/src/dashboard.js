@@ -1,7 +1,7 @@
 import {
   seedSeries,
   ingestFrame,
-  chartData,
+  chartDataLive,
   floorCountdown,
   WINDOW_CAPACITY,
 } from "./telemetry.js";
@@ -143,7 +143,7 @@ function buildChartOptions() {
       name: s.name,
       type: "line",
       showSymbol: false,
-      smooth: true,
+      smooth: "monotone", // smooth slope, never overshoots between points
       lineStyle: { width: 2, color: s.color },
       itemStyle: { color: s.color },
       areaStyle: { color: s.fill },
@@ -152,25 +152,38 @@ function buildChartOptions() {
   };
 }
 
-// merge-mode update: structural options are set once, only data streams in each
-// tick. avoids the full-chart teardown (setOption(..., true)) that used to glitch.
-function render() {
-  if (!state.series) return;
-  // fixed-width rolling window: data scrolls off the left edge without the
-  // axis auto-fitting to the growing extent (which used to squeeze the lines)
-  const now = Date.now();
+// full merge-mode repaint: structural options are set once, only the window and
+// streamed data move. runs once per WS tick (render) and again every animation
+// frame (paint) so the axis AND the line tips glide at 60fps between ticks.
+function paint(now) {
+  if (!state.series || !state.chart) return;
   const patch = {
     xAxis: { min: now - WINDOW_MS, max: now },
     series: [],
   };
   for (const s of SERIES_DEF) {
-    const seriesPatch = { id: s.key, data: chartData(state.series, s.key) };
+    const seriesPatch = { id: s.key, data: chartDataLive(state.series, s.key, now) };
     if (s.key === "attack") seriesPatch.markArea = attackMarkArea();
     patch.series.push(seriesPatch);
   }
   state.chart.setOption(patch);
-  sparkRender(state.sparkConns, chartData(state.series, "conns"));
-  sparkRender(state.sparkCpu, chartData(state.series, "cpu"));
+  sparkRender(state.sparkConns, chartDataLive(state.series, "conns", now));
+  sparkRender(state.sparkCpu, chartDataLive(state.series, "cpu", now));
+}
+
+function render() {
+  paint(Date.now());
+}
+
+// 60fps glide: the rolling window and the live line tips track the wall clock
+// every animation frame (rAF self-pauses in hidden tabs) so the chart scrolls
+// smoothly instead of stepping on the 2Hz WS ticks.
+function startFrameLoop() {
+  const frame = () => {
+    paint(Date.now());
+    requestAnimationFrame(frame);
+  };
+  requestAnimationFrame(frame);
 }
 
 function attackMarkArea() {
@@ -197,7 +210,7 @@ function sparkOptions(color) {
     grid: { left: 2, right: 2, top: 2, bottom: 2 },
     xAxis: { type: "time", show: false },
     yAxis: { type: "value", show: false, scale: true },
-    series: [{ type: "line", showSymbol: false, smooth: true, lineStyle: { width: 1.5, color }, itemStyle: { color }, data: [] }],
+    series: [{ type: "line", showSymbol: false, smooth: "monotone", lineStyle: { width: 1.5, color }, itemStyle: { color }, data: [] }],
   };
 }
 
@@ -586,6 +599,7 @@ async function init() {
   });
   setInterval(updateFreshness, 500); // gauge ticks even between frames
   setInterval(() => { if (state.lastMessageAt) renderLogWith(lastBlocks); }, 1000); // countdowns tick every second
+  startFrameLoop(); // glide the chart window at 60fps
 }
 init();
 

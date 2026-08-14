@@ -46,6 +46,30 @@ export function chartData(series, key) {
   return buf ? buf.toArray().map((p) => [p.ts * 1000, p.value]) : [];
 }
 
+// chartData + a live tip extrapolated to `nowMs` so the line keeps gliding at
+// 60fps between the 2Hz ws ticks. the projection eases out (exponential decay)
+// so the tip starts on the real slope then settles instead of driving a hard
+// straight line that snaps when the next real point lands. flat-hold with a
+// single point; clamped so rps/pct never dip below zero.
+const TIP_TAU_MS = 250; // time-constant that softens the extrapolated slope
+
+export function chartDataLive(series, key, nowMs) {
+  const pts = chartData(series, key);
+  const last = pts[pts.length - 1];
+  if (!last || nowMs <= last[0]) return pts;
+  let val = last[1];
+  if (pts.length >= 2) {
+    const [t0, v0] = pts[pts.length - 2];
+    const dt = last[0] - t0;
+    if (dt > 0) {
+      const slope = (last[1] - v0) / dt;
+      const elapsed = nowMs - last[0];
+      val = last[1] + slope * TIP_TAU_MS * (1 - Math.exp(-elapsed / TIP_TAU_MS));
+    }
+  }
+  return [...pts, [nowMs, Math.max(0, val)]];
+}
+
 // ingest one live ws frame into the buffers
 export function ingestFrame(frame, series) {
   series.normal.push({ ts: frame.ts, value: frame.normal_rps ?? 0 });
