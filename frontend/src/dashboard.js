@@ -3,10 +3,12 @@ import {
   ingestFrame,
   chartData,
   floorCountdown,
+  WINDOW_CAPACITY,
 } from "./telemetry.js";
 
 const STALE_MS = 2500; // mirror backend stale_threshold_s
 const WS_TICK_MS = 500; // server pushes every 0.5s
+const WINDOW_MS = WINDOW_CAPACITY * WS_TICK_MS; // fixed 60s rolling window
 const MAX_RECONNECT_BACKOFF = 8000;
 const ATTACK_PARAMS = { rps: 200, threads: 4, duration: 10 };
 
@@ -154,7 +156,13 @@ function buildChartOptions() {
 // tick. avoids the full-chart teardown (setOption(..., true)) that used to glitch.
 function render() {
   if (!state.series) return;
-  const patch = { series: [] };
+  // fixed-width rolling window: data scrolls off the left edge without the
+  // axis auto-fitting to the growing extent (which used to squeeze the lines)
+  const now = Date.now();
+  const patch = {
+    xAxis: { min: now - WINDOW_MS, max: now },
+    series: [],
+  };
   for (const s of SERIES_DEF) {
     const seriesPatch = { id: s.key, data: chartData(state.series, s.key) };
     if (s.key === "attack") seriesPatch.markArea = attackMarkArea();
@@ -281,7 +289,7 @@ function handleAttackWindowChange() {
 
 // ---- metrics ----
 function updateMetrics(f) {
-  els.conns.textContent = String(f.active_connections ?? 0);
+  els.conns.textContent = String(Math.round(f.connections_per_sec ?? 0));
   els.cpu.textContent = `${Math.round(f.cpu_load_pct ?? 0)}%`;
   els.blocked.textContent = String(f.blocked_rps ?? 0);
   // cumulative blocked traffic estimate (rps * 0.5s tick)

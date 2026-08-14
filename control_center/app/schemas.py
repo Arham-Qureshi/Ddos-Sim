@@ -9,6 +9,7 @@ class Metrics(BaseModel):
     attack_rps: float = 0
     blocked_rps: float = 0
     cpu_load_pct: float = 0
+    connections_per_sec: float = 0
     active_connections: int = 0
 
 class BlockRecord(BaseModel):
@@ -63,7 +64,8 @@ class WsFrame(BaseModel):
     attack_rps: float
     blocked_rps: float
     cpu_load_pct: float
-    active_connections: int
+    connections_per_sec: float = 0
+    active_connections: int = 0
     blocks: list[BlockRecord] = []
 
 class BlocksResponse(BaseModel):

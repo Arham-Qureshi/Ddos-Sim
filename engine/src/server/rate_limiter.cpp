@@ -183,5 +183,15 @@ bool RateLimiter::manual_unban(const std::string& vip) {
 
 std::vector<RecentBlock> RateLimiter::recent_blocks() const {
     std::shared_lock<std::shared_mutex> lock(mutex_);
-    return {recent_blocks_.begin(), recent_blocks_.end()};
+    uint64_t now = now_ms();
+    std::vector<RecentBlock> out;
+    for (const RecentBlock& b : recent_blocks_) {
+        // expired temp bans are pointless to keep broadcasting; manual
+        // permanent bans (unblock_ts == 0) stay until explicitly unbanned
+        if (b.unblock_ts != 0 && b.unblock_ts <= now) {
+            continue;
+        }
+        out.push_back(b);
+    }
+    return out;
 }

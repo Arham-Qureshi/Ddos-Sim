@@ -36,7 +36,7 @@ async def test_record_dropped_and_blocks_ledger_capped():
     await s.record_blocks([{"vip": "10.0.0.1", "unblock_ts": 100}], now=1.0)
     await s.record_blocks([{"vip": "10.0.0.2", "unblock_ts": 100}], now=1.0)
     await s.record_blocks([{"vip": "10.0.0.3", "unblock_ts": 100}], now=1.0)
-    snap = s.recent_blocks_snapshot()
+    snap = s.recent_blocks_snapshot(now=2.0)
     assert [b.vip for b in snap] == ["10.0.0.2", "10.0.0.3"]
 
 
@@ -44,11 +44,11 @@ async def test_block_anchor_is_stable_while_streaming():
     s = AppState(Settings(rate_limit_block_seconds=10))
     # first sight anchors the clock
     await s.record_blocks([{"vip": "10.0.0.9", "unblock_ts": 500}], now=10.0)
-    first_at = s.recent_blocks_snapshot()[0].blocked_at_ms
+    first_at = s.recent_blocks_snapshot(now=11.0)[0].blocked_at_ms
     # repeat frames of the same block must NOT re-anchor
     await s.record_blocks([{"vip": "10.0.0.9", "unblock_ts": 500}], now=12.0)
     await s.record_blocks([{"vip": "10.0.0.9", "unblock_ts": 500}], now=14.0)
-    assert s.recent_blocks_snapshot()[0].blocked_at_ms == first_at
+    assert s.recent_blocks_snapshot(now=15.0)[0].blocked_at_ms == first_at
 
 
 async def test_reban_reanchors_clock():
@@ -56,16 +56,24 @@ async def test_reban_reanchors_clock():
     await s.record_blocks([{"vip": "10.0.0.9", "unblock_ts": 500}], now=10.0)
     # a fresh ban with a new unblock_ts resets the countdown
     await s.record_blocks([{"vip": "10.0.0.9", "unblock_ts": 900}], now=20.0)
-    assert s.recent_blocks_snapshot()[0].blocked_at_ms == 20000
+    assert s.recent_blocks_snapshot(now=21.0)[0].blocked_at_ms == 20000
 
 
-async def test_remaining_s_counts_down_and_floor_at_zero():
+async def test_remaining_s_counts_down_and_lifted_ban_leaves_snapshot():
     s = AppState(Settings(rate_limit_block_seconds=10))
     await s.record_blocks([{"vip": "10.0.0.9", "unblock_ts": 500}], now=10.0)
     # anchored at 10s, block lasts 10s -> 9s left at now=11s
     assert s.recent_blocks_snapshot(now=11.0)[0].remaining_s == 9.0
-    # floor at zero instead of going negative
-    assert s.recent_blocks_snapshot(now=30.0)[0].remaining_s == 0.0
+    # once the countdown hits zero the ban has been lifted: it leaves the list
+    assert s.recent_blocks_snapshot(now=30.0) == []
+
+
+async def test_expired_temp_ban_leaves_but_permanent_ban_stays():
+    s = AppState(Settings(rate_limit_block_seconds=10))
+    await s.record_blocks([{"vip": "10.0.0.9", "unblock_ts": 500}], now=10.0)
+    await s.record_blocks([{"vip": "10.0.0.8", "unblock_ts": 0}], now=10.0)
+    vips = {b.vip for b in s.recent_blocks_snapshot(now=30.0)}
+    assert vips == {"10.0.0.8"}  # temp expired away, manual permanent stays
 
 
 async def test_permanent_ban_has_no_countdown():

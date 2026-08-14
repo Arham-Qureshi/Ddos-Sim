@@ -9,6 +9,7 @@
 #include <cstring>
 #include <fcntl.h>
 #include <fstream>
+#include <sstream>
 #include <string>
 #include <unistd.h>
 
@@ -27,12 +28,23 @@ uint64_t process_cpu_ticks() {
     if (!stat.is_open()) {
         return 0;
     }
+    std::string line;
+    if (!std::getline(stat, line)) {
+        return 0;
+    }
+    // comm (field 2) can contain spaces/parens, so locate its closing ')'
+    std::string::size_type close = line.rfind(')');
+    if (close == std::string::npos) {
+        return 0;
+    }
+    // after comm come state..cmajflt (fields 3-13), then utime(14)+stime(15)
+    std::istringstream rest(line.substr(close + 1));
     std::string dummy;
-    for (int i = 0; i < 11; ++i) {
-        stat >> dummy;
+    for (int i = 3; i <= 13; ++i) {
+        rest >> dummy;
     }
     uint64_t utime = 0, stime = 0;
-    stat >> utime >> stime;
+    rest >> utime >> stime;
     return utime + stime;
 }
 
@@ -62,6 +74,7 @@ void TelemetryBroadcaster::start() {
     last_normal_accepted_ = stats_.normal_accepted.load(std::memory_order_relaxed);
     last_attack_accepted_ = stats_.attack_accepted.load(std::memory_order_relaxed);
     last_blocked_accepted_ = stats_.blocked_accepted.load(std::memory_order_relaxed);
+    last_total_accepted_ = stats_.total_accepted.load(std::memory_order_relaxed);
     last_cpu_ticks_ = process_cpu_ticks();
     last_cpu_wall_ms_ = now_ms();
 
@@ -96,6 +109,9 @@ void TelemetryBroadcaster::run_loop() {
                                 std::memory_order_relaxed);
         stats_.blocked_rps.store(snap(stats_.blocked_accepted, last_blocked_accepted_) * 2,
                                  std::memory_order_relaxed);
+        // all accepted sockets (normal + attack + blocked) -> flood arrival rate
+        stats_.connections_per_sec.store(
+            snap(stats_.total_accepted, last_total_accepted_) * 2, std::memory_order_relaxed);
 
 uint64_t wall_now = now_ms();
         uint64_t wall_delta = wall_now - last_cpu_wall_ms_;
@@ -131,6 +147,8 @@ uint64_t wall_now = now_ms();
                          {"attack_rps", stats_.attack_rps.load(std::memory_order_relaxed)},
                          {"blocked_rps", stats_.blocked_rps.load(std::memory_order_relaxed)},
                          {"cpu_load_pct", pct},
+                         {"connections_per_sec",
+                          stats_.connections_per_sec.load(std::memory_order_relaxed)},
                          {"active_connections",
                           stats_.active_connections.load(std::memory_order_relaxed)}}},
             {"recent_blocks", blocks}};

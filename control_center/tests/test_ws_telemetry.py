@@ -38,7 +38,8 @@ def test_ws_telemetry_pushes_live_frames():
             data = ws.receive_json()
             assert data is not None
             for key in ("ts", "normal_rps", "attack_rps", "blocked_rps",
-                        "cpu_load_pct", "active_connections", "blocks"):
+                        "cpu_load_pct", "connections_per_sec", "active_connections",
+                        "blocks"):
                 assert key in data
 
 

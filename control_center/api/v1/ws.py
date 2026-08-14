@@ -26,6 +26,7 @@ def _build_frame(state) -> WsFrame | None:
         attack_rps=latest.metrics.attack_rps,
         blocked_rps=latest.metrics.blocked_rps,
         cpu_load_pct=latest.metrics.cpu_load_pct,
+        connections_per_sec=latest.metrics.connections_per_sec,
         active_connections=latest.metrics.active_connections,
         blocks=blocks,
     )

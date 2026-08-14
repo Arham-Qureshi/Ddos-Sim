@@ -41,7 +41,7 @@ describe("seedSeries", () => {
         timestamp: 1,
         metrics: {
           normal_rps: 1, attack_rps: 10, blocked_rps: 2,
-          active_connections: 8, cpu_load_pct: 40,
+          connections_per_sec: 8, cpu_load_pct: 40,
         },
       },
       { timestamp: 2, metrics: { normal_rps: 3, attack_rps: 0, blocked_rps: 0 } },
@@ -88,7 +88,7 @@ describe("ingestFrame", () => {
     ingestFrame(
       {
         ts: 2, normal_rps: 5, attack_rps: 100, blocked_rps: 7,
-        active_connections: 12, cpu_load_pct: 55,
+        connections_per_sec: 12, cpu_load_pct: 55,
       },
       s,
     );
