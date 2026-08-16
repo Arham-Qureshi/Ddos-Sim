@@ -344,11 +344,19 @@
         role="tab" aria-selected="true" aria-controls="command-center-tab">Command Center</button>
     </nav>
 
-    <!-- Tab 1: Threat Map — placeholder until Tickets 10-13 land -->
-    <section id="threat-map-tab" data-tab-panel="threat-map" class="panel mt-5 hidden rounded-lg p-8" role="tabpanel"
+    <!-- Tab 1: Threat Map — interactive topology (Ticket 10) -->
+    <section id="threat-map-tab" data-tab-panel="threat-map" class="panel mt-5 hidden rounded-lg p-4" role="tabpanel"
       aria-labelledby="tab-threat-map">
-      <p class="mono text-sm uppercase tracking-widest text-slate-500">Threat Map</p>
-      <p class="mt-2 text-sm text-slate-400">Interactive topology renderer lands with Tickets 10-13.</p>
+      <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <h2 class="mono text-sm font-semibold uppercase tracking-widest text-slate-300">Threat Map</h2>
+        <div class="flex gap-4 text-xs">
+          <span class="flex items-center gap-1.5"><span class="h-2 w-2 rounded-full" style="background:var(--normal)"></span>target</span>
+          <span class="flex items-center gap-1.5"><span class="h-2 w-2 rounded-full" style="background:#64748b"></span>host</span>
+          <span class="flex items-center gap-1.5"><span class="h-2 w-2 rounded-full" style="background:var(--attack)"></span>bots (attack)</span>
+        </div>
+      </div>
+      <canvas id="threat-map-canvas" class="h-[340px] w-full" aria-label="attack topology map"></canvas>
+      <p class="mt-2 text-xs text-slate-500">bots fan out from the attacker host when an attack runs</p>
     </section>
 
     <!-- Tab 2: Command Center — the live metrics dashboard -->
@@ -474,6 +482,7 @@
   </div>
 
   <script src="vendor/echarts.min.js"></script>
+  <script src="vendor/gsap.min.js"></script>
   <script type="module" src="src/dashboard.js"></script>
 </body>
 

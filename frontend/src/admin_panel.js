@@ -59,11 +59,13 @@ export function initAdminPanel(els, actions) {
   els.rps.addEventListener("input", () => {
     params.rps = clamp(Math.round(Number(els.rps.value)), RPS_MIN, RPS_MAX);
     renderValues();
+    actions.paramsChange?.(params);
     if (els.baseline.checked) actions.baseline({ enabled: true, bots: params.bots });
   });
   els.bots.addEventListener("input", () => {
     params.bots = clamp(Math.round(Number(els.bots.value)), BOTS_MIN, BOTS_MAX);
     renderValues();
+    actions.paramsChange?.(params);
     if (els.baseline.checked) actions.baseline({ enabled: true, bots: params.bots });
   });
   els.duration.addEventListener("change", () => {

@@ -68,3 +68,16 @@ describe("index.html admin sidebar (Ticket 8)", () => {
     expect(html).toMatch(/id="attack-duration"[^>]*min="5" max="60"/);
   });
 });
+
+describe("index.html threat map (Ticket 10)", () => {
+  it("threat-map tab contains the topology canvas", () => {
+    expect(html).toContain('id="threat-map-canvas"');
+  });
+
+  it("loads vendored gsap before the dashboard module", () => {
+    const moduleIdx = html.indexOf('type="module"');
+    const gsapIdx = html.indexOf("vendor/gsap.min.js");
+    expect(gsapIdx).toBeGreaterThan(-1);
+    expect(gsapIdx).toBeLessThan(moduleIdx);
+  });
+});
