@@ -7,6 +7,7 @@ import {
 } from "./telemetry.js";
 import { initTabs } from "./tabs.js";
 import { initAdminPanel } from "./admin_panel.js";
+import { initThreatMap } from "./threat_map.js";
 
 const STALE_MS = 2500; // mirror backend stale_threshold_s
 const WS_TICK_MS = 500; // server pushes every 0.5s
@@ -301,6 +302,7 @@ function renderEvents() {
 
 function handleAttackWindowChange() {
   // called after attack state flips; maintain shading + events
+  threatMap.setAttackActive(state.attackActive); // fan bots out / collapse them
   if (state.attackActive) {
     state.attackWindows.push({ startAt: Date.now(), endAt: null });
     const p = panel.getParams();
@@ -677,7 +679,11 @@ const panel = initAdminPanel({
   baseline: (b) => handleBaseline(b),
   algorithm: (alg) => handleAlgorithm(alg),
   emergency: () => handleEmergency(),
+  paramsChange: (params) => threatMap.setBotCount(params.bots),
 });
+
+// threat map (Ticket 10): bot slider re-layouts, attack state fans bots out
+const threatMap = initThreatMap({ canvas: $("threat-map-canvas") });
 
 // tab shell: only the visible tab repaints; going back to the command center
 // needs an explicit resize because echarts measured the panel while hidden
@@ -689,6 +695,9 @@ document.addEventListener("tabchange", (e) => {
     state.sparkConns && state.sparkConns.resize();
     state.sparkCpu && state.sparkCpu.resize();
     render(); // repaint immediately after becoming visible
+  }
+  if (state.activeTab === "threat-map") {
+    threatMap.resize(); // canvas measured while the panel was hidden
   }
 });
 state.activeTab = "command-center";
@@ -714,4 +723,5 @@ window.addEventListener("resize", () => {
   state.chart && state.chart.resize();
   state.sparkConns && state.sparkConns.resize();
   state.sparkCpu && state.sparkCpu.resize();
+  threatMap.resize();
 });
