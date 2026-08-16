@@ -148,4 +148,13 @@ describe("initAdminPanel", () => {
     expect(els.bots.value).toBe("12");
     expect(els.botsVal.textContent).toBe("12");
   });
+
+  it("slider input invokes the paramsChange action with updated params", () => {
+    const { els, actions } = mount();
+    actions.paramsChange = vi.fn();
+    initAdminPanel(els, actions);
+    els.bots.value = "12";
+    els.bots.dispatchEvent(new Event("input"));
+    expect(actions.paramsChange).toHaveBeenCalledWith(expect.objectContaining({ bots: 12 }));
+  });
 });
