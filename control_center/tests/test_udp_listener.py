@@ -20,8 +20,13 @@ def test_parse_frame_valid():
         "metrics": {"normal_rps": 1, "attack_rps": 0, "blocked_rps": 0,
                     "cpu_load_pct": 1, "active_connections": 1},
         "recent_blocks": [],
+        "algorithm": "token_bucket",
+        "decisions": [{"vip": "10.0.0.7", "allowed": True, "ts_ms": 100,
+                       "tokens": 1.5, "window_count": 0}],
     }).encode())
     assert isinstance(f, TelemetryFrame)
+    assert f.algorithm == "token_bucket"
+    assert f.decisions[0].vip == "10.0.0.7"
 
 
 def test_parse_frame_garbage_returns_none():
