@@ -11,6 +11,7 @@ namespace {
 constexpr uint64_t kWindowMs = 1000;
 constexpr uint64_t kPruneInterval = 256;
 constexpr size_t kMaxRecentBlocks = 16;
+constexpr size_t kMaxRecentDecisions = 128;
 constexpr const char* kAdminIp = "127.0.0.1";
 
 uint64_t now_ms() {
@@ -27,6 +28,8 @@ RateLimiter::RateLimiter(RateLimiterConfig cfg) : cfg_(cfg) {
 
 void RateLimiter::set_algorithm(RateLimiterConfig::Algorithm algo) {
     algorithm_.store(static_cast<int>(algo), std::memory_order_relaxed);
+    std::unique_lock<std::shared_mutex> lock(mutex_);
+    decisions_.clear();  // stale records carry the previous algorithm's tokens
 }
 
 RateLimiterConfig::Algorithm RateLimiter::algorithm() const {
@@ -46,18 +49,22 @@ bool RateLimiter::allow(const std::string& vip) {
         maybe_prune(now);
     }
     if (is_banned(vip, now)) {
-        return false;  // banned -> drop, no re-ban
+        record_decision(vip, false, now, 0.0, 0);  // already-banned drop
+        return false;
     }
 
     bool ok = false;
+    double tokens = 0.0;
+    uint32_t window_count = 0;
     switch (algorithm()) {
         case RateLimiterConfig::Algorithm::kTokenBucket:
-            ok = allow_token_bucket(vip, now);
+            ok = allow_token_bucket(vip, now, tokens);
             break;
         case RateLimiterConfig::Algorithm::kSlidingWindow:
-            ok = allow_sliding_window(vip, now);
+            ok = allow_sliding_window(vip, now, window_count);
             break;
     }
+    record_decision(vip, ok, now, tokens, window_count);
     if (!ok) {
         ban(vip, now);
     }
@@ -99,7 +106,22 @@ void RateLimiter::ban(const std::string& vip, uint64_t now_ms) {
     }
 }
 
-bool RateLimiter::allow_token_bucket(const std::string& vip, uint64_t now_ms) {
+void RateLimiter::record_decision(const std::string& vip, bool allowed, uint64_t now_ms,
+                                  double tokens, uint32_t window_count) {
+    std::unique_lock<std::shared_mutex> lock(mutex_);
+    decisions_.push_back(DecisionRecord{vip, allowed, now_ms, tokens, window_count});
+    while (decisions_.size() > kMaxRecentDecisions) {
+        decisions_.pop_front();
+    }
+}
+
+std::vector<DecisionRecord> RateLimiter::recent_decisions() const {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    return std::vector<DecisionRecord>(decisions_.begin(), decisions_.end());
+}
+
+bool RateLimiter::allow_token_bucket(const std::string& vip, uint64_t now_ms,
+                                     double& tokens_out) {
     std::unique_lock<std::shared_mutex> lock(mutex_);
     BucketState& b = buckets_[vip];
     if (b.last_refill_ms == 0) {
@@ -111,22 +133,27 @@ bool RateLimiter::allow_token_bucket(const std::string& vip, uint64_t now_ms) {
     b.tokens = std::min(capacity, b.tokens + elapsed * capacity);
     b.last_refill_ms = now_ms;
     if (b.tokens < 1.0) {
-        return false;  // bucket empty -> allow() bans
+        tokens_out = b.tokens;  // bucket empty -> allow() bans
+        return false;
     }
     b.tokens -= 1.0;
+    tokens_out = b.tokens;
     return true;
 }
 
-bool RateLimiter::allow_sliding_window(const std::string& vip, uint64_t now_ms) {
+bool RateLimiter::allow_sliding_window(const std::string& vip, uint64_t now_ms,
+                                       uint32_t& window_out) {
     std::unique_lock<std::shared_mutex> lock(mutex_);
     std::deque<uint64_t>& w = windows_[vip];
     while (!w.empty() && now_ms - w.front() >= kWindowMs) {
         w.pop_front();
     }
     if (w.size() >= static_cast<size_t>(cfg_.max_rps)) {
-        return false;  // 20+ requests inside the last second -> drop
+        window_out = static_cast<uint32_t>(w.size());  // full window -> drop
+        return false;
     }
     w.push_back(now_ms);
+    window_out = static_cast<uint32_t>(w.size());
     return true;
 }
 

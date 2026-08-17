@@ -29,6 +29,8 @@ def _build_frame(state) -> WsFrame | None:
         connections_per_sec=latest.metrics.connections_per_sec,
         active_connections=latest.metrics.active_connections,
         blocks=blocks,
+        algorithm=latest.algorithm,
+        decisions=[d.model_dump() for d in latest.decisions],
     )
 
 

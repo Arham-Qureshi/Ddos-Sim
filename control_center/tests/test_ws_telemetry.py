@@ -107,3 +107,26 @@ async def test_ws_telemetry_blocks_carry_countdown():
 def test_ws_telemetry_route_is_listed():
     app = create_app(Settings(udp_port=_free_udp_port()))
     assert app.url_path_for("ws_telemetry") == "/api/ws/telemetry"
+
+
+def test_ws_telemetry_carries_algorithm_and_decisions():
+    app = _app_with_frame()
+    app.state.state.latest = TelemetryFrame(
+        timestamp=1,
+        metrics=Metrics(normal_rps=2),
+        algorithm="sliding_window",
+        decisions=[
+            {"vip": "10.0.0.9", "allowed": False, "ts_ms": 500,
+             "tokens": 0.0, "window_count": 2}
+        ],
+    )
+    with TestClient(app) as c:
+        with c.websocket_connect("/api/ws/telemetry") as ws:
+            data = ws.receive_json()
+            assert data["algorithm"] == "sliding_window"
+            d = data["decisions"][0]
+            assert d["vip"] == "10.0.0.9"
+            assert d["allowed"] is False
+            assert d["ts_ms"] == 500
+            assert d["tokens"] == 0.0
+            assert d["window_count"] == 2

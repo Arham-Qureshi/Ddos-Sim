@@ -19,3 +19,29 @@ def test_missing_metrics_default_to_zero():
     assert f.metrics.normal_rps == 0
     assert f.metrics.active_connections == 0
     assert f.recent_blocks == []
+
+def test_parse_decisions_and_algorithm():
+    raw = json.dumps({
+        "timestamp": 1,
+        "metrics": {"normal_rps": 0},
+        "algorithm": "sliding_window",
+        "decisions": [
+            {"vip": "10.0.0.5", "allowed": False, "ts_ms": 1723,
+             "tokens": 0.0, "window_count": 4}
+        ],
+    })
+    f = TelemetryFrame.model_validate_json(raw)
+    assert f.algorithm == "sliding_window"
+    assert len(f.decisions) == 1
+    d = f.decisions[0]
+    assert d.vip == "10.0.0.5"
+    assert d.allowed is False
+    assert d.ts_ms == 1723
+    assert d.tokens == 0.0
+    assert d.window_count == 4
+
+
+def test_missing_decisions_default_empty():
+    f = TelemetryFrame.model_validate_json(json.dumps({"timestamp": 1}))
+    assert f.algorithm == "token_bucket"
+    assert f.decisions == []
