@@ -71,7 +71,8 @@ def main() -> int:
         print(f"missing {SERVER} — run: cmake -S engine -B build && cmake --build build")
         return 2
 
-    server = subprocess.Popen([str(SERVER), str(CONFIG)])
+    log = open("/tmp/t11_smoke_server.log", "w")
+    server = subprocess.Popen([str(SERVER), str(CONFIG)], stdout=log, stderr=log)
     try:
         if not wait_port(SERVER_TCP):
             check("server listens on 8080", False)
@@ -89,6 +90,10 @@ def main() -> int:
                 botnet.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 botnet.kill()
+                try:
+                    botnet.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    pass
 
         check("received >= 5 telemetry frames", len(frames) >= 5)
         with_decisions = [f for f in frames if f.get("decisions")]
@@ -106,6 +111,11 @@ def main() -> int:
             server.wait(timeout=5)
         except subprocess.TimeoutExpired:
             server.kill()
+            try:
+                server.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+        log.close()
 
     failed = [name for name, ok in results if not ok]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")
