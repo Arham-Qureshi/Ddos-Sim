@@ -13,6 +13,14 @@ struct RecentBlock {
     uint64_t unblock_ts;  // steady_clock ms
 };
 
+struct DecisionRecord {
+    std::string vip;
+    bool allowed;        // true = passed the rate limiter
+    uint64_t ts_ms;      // steady_clock ms at decision time
+    double tokens;       // token bucket: tokens remaining after the decision
+    uint32_t window_count;  // sliding window: requests in window after the decision
+};
+
 struct RateLimiterConfig {
     uint32_t max_rps = 20;
     uint32_t block_seconds = 10;
@@ -33,6 +41,9 @@ public:
     // Snapshot of the most recent bans, newest last, capped at 16.
     std::vector<RecentBlock> recent_blocks() const;
 
+    // Snapshot of the most recent per-packet decisions, newest last, capped at 128.
+    std::vector<DecisionRecord> recent_decisions() const;
+
     // Mitigation master switch: when disabled, allow() always passes.
     void set_enabled(bool on);
     bool enabled() const;
@@ -48,9 +59,11 @@ public:
 
 private:
     bool is_banned(const std::string& vip, uint64_t now_ms);
-    bool allow_token_bucket(const std::string& vip, uint64_t now_ms);
-    bool allow_sliding_window(const std::string& vip, uint64_t now_ms);
+    bool allow_token_bucket(const std::string& vip, uint64_t now_ms, double& tokens_out);
+    bool allow_sliding_window(const std::string& vip, uint64_t now_ms, uint32_t& window_out);
     void ban(const std::string& vip, uint64_t now_ms);
+    void record_decision(const std::string& vip, bool allowed, uint64_t now_ms,
+                         double tokens, uint32_t window_count);
     void maybe_prune(uint64_t now_ms);
 
     RateLimiterConfig cfg_;
@@ -70,6 +83,7 @@ private:
 
     mutable std::shared_mutex mutex_;
     std::deque<RecentBlock> recent_blocks_;
+    std::deque<DecisionRecord> decisions_;
     std::atomic<uint64_t> calls_since_prune_{0};
     std::atomic<bool> enabled_{true};
     std::atomic<int> algorithm_{static_cast<int>(RateLimiterConfig::Algorithm::kTokenBucket)};
