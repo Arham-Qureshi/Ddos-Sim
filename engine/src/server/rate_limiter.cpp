@@ -28,6 +28,8 @@ RateLimiter::RateLimiter(RateLimiterConfig cfg) : cfg_(cfg) {
 
 void RateLimiter::set_algorithm(RateLimiterConfig::Algorithm algo) {
     algorithm_.store(static_cast<int>(algo), std::memory_order_relaxed);
+    std::unique_lock<std::shared_mutex> lock(mutex_);
+    decisions_.clear();  // stale records carry the previous algorithm's tokens
 }
 
 RateLimiterConfig::Algorithm RateLimiter::algorithm() const {
