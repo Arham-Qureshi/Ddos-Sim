@@ -431,6 +431,7 @@ async function refreshConfigAndHealth() {
       const cfg = await res.json();
       state.config.rateLimitMaxRps = cfg.rate_limit_max_rps ?? 20;
       state.config.rateLimitBlockSeconds = cfg.rate_limit_block_seconds ?? 10;
+      timeline.rateLimitMaxRps = state.config.rateLimitMaxRps; // keep explain() strings honest
       // rebuild the threshold line around the real config value
       const opts = buildChartOptions();
       opts.series = []; // don't clobber accumulated data; markLine rides on yAxis
@@ -691,7 +692,7 @@ const panel = initAdminPanel({
 const threatMap = initThreatMap({ canvas: $("threat-map-canvas") });
 
 // timeline buffer (Ticket 11): captures per-packet decisions for t12/t13
-const timeline = new TimelineBuffer();
+const timeline = new TimelineBuffer({ rateLimitMaxRps: state.config?.rateLimitMaxRps ?? 2 });
 
 // tab shell: only the visible tab repaints; going back to the command center
 // needs an explicit resize because echarts measured the panel while hidden
