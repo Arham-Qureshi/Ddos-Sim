@@ -60,6 +60,37 @@ describe("TimelineBuffer basics", () => {
     expect(spawns.filter((p) => p.srcIp === "10.0.0.5")).toHaveLength(2);
   });
 
+  it("recovers from an engine restart when ts_ms resets below the watermark", () => {
+    const b = new TimelineBuffer();
+    b.ingest(tick([decision({ ts_ms: 5000 })])); // old engine process watermark
+    const before = b.frames().flatMap((f) => f.activePackets).filter((p) => p.progress === 0).length;
+    expect(before).toBe(1);
+
+    // a fresh ddos_server process: its steady clock starts near 0 again, so the
+    // tick lands below the old watermark and must still spawn, not be skipped
+    b.ingest(tick([decision({ ts_ms: 120 })]));
+    const after = b.frames().flatMap((f) => f.activePackets).filter((p) => p.progress === 0).length;
+    expect(after).toBe(2);
+  });
+
+  it("never mutates pooled packets of a frame still in the read window", () => {
+    const b = new TimelineBuffer({ capacity: 10 });
+    // two ticks fill the ring (10 frames, stepIndex 0..9)
+    b.ingest(tick([decision({ ts_ms: 100 })]));
+    b.ingest(tick([decision({ ts_ms: 200 })]));
+    const survivor = b.frames()[5]; // stepIndex 5: survives the next tick's eviction
+    const packetRef = survivor.activePackets[0];
+    const progress = packetRef.progress;
+    const count = survivor.activePackets.length;
+
+    b.ingest(tick([decision({ ts_ms: 300 })])); // overflow: evicts stepIndex 0..4
+
+    expect(b.frames()[0]).toBe(survivor); // still the head of the read window
+    expect(survivor.activePackets.length).toBe(count);
+    expect(survivor.activePackets[0]).toBe(packetRef); // same pooled object
+    expect(survivor.activePackets[0].progress).toBe(progress); // unmutated
+  });
+
   it("records activeAlgorithm from the tick or setAlgorithm", () => {
     const b = new TimelineBuffer();
     b.ingest(tick([], "sliding_window"));
