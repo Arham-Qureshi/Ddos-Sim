@@ -124,4 +124,9 @@ def test_ws_telemetry_carries_algorithm_and_decisions():
         with c.websocket_connect("/api/ws/telemetry") as ws:
             data = ws.receive_json()
             assert data["algorithm"] == "sliding_window"
-            assert data["decisions"][0]["vip"] == "10.0.0.9"
+            d = data["decisions"][0]
+            assert d["vip"] == "10.0.0.9"
+            assert d["allowed"] is False
+            assert d["ts_ms"] == 500
+            assert d["tokens"] == 0.0
+            assert d["window_count"] == 2
