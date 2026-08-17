@@ -8,6 +8,7 @@ import {
 import { initTabs } from "./tabs.js";
 import { initAdminPanel } from "./admin_panel.js";
 import { initThreatMap } from "./threat_map.js";
+import { TimelineBuffer } from "./timeline_buffer.js";
 
 const STALE_MS = 2500; // mirror backend stale_threshold_s
 const WS_TICK_MS = 500; // server pushes every 0.5s
@@ -32,6 +33,7 @@ const state = {
   engineReachable: true,
   attackActive: false,
   mitigationOn: true,
+  algorithm: "token_bucket",
   lastAttackAt: 0,
   seedRendered: false,
   activeTab: "command-center", // visible tab; only it repaints (Ticket 9)
@@ -375,6 +377,8 @@ function connect() {
       state.seedRendered = true;
     }
     ingestFrame(frame, state.series);
+    timeline.setAlgorithm(state.algorithm);
+    timeline.ingest(frame);
     render();
     renderLogWith(frame.blocks || []);
     updateMetrics(frame);
@@ -482,6 +486,7 @@ async function syncControlState() {
     state.engineReachable = status.engine_reachable ?? true;
     state.attackActive = Boolean(status.attack_running);
     state.mitigationOn = Boolean(status.mitigation_on);
+    state.algorithm = status.algorithm === "sliding_window" ? "sliding_window" : "token_bucket";
   }
   if (state.attackActive !== wasRunning) handleAttackWindowChange();
   if (state.mitigationOn !== wasMitigation) {
@@ -684,6 +689,9 @@ const panel = initAdminPanel({
 
 // threat map (Ticket 10): bot slider re-layouts, attack state fans bots out
 const threatMap = initThreatMap({ canvas: $("threat-map-canvas") });
+
+// timeline buffer (Ticket 11): captures per-packet decisions for t12/t13
+const timeline = new TimelineBuffer();
 
 // tab shell: only the visible tab repaints; going back to the command center
 // needs an explicit resize because echarts measured the panel while hidden
