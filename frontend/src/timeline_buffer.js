@@ -34,11 +34,11 @@ function explain(frame, cap) {
 }
 
 export class TimelineBuffer {
-  constructor({ capacity = BUFFER_CAPACITY, flightFrames = FLIGHT_FRAMES } = {}) {
+  constructor({ capacity = BUFFER_CAPACITY, flightFrames = FLIGHT_FRAMES, rateLimitMaxRps = 2 } = {}) {
     this.capacity = capacity;
     this.flightFrames = flightFrames;
     this.activeAlgorithm = "token_bucket";
-    this.rateLimitMaxRps = 2;
+    this.rateLimitMaxRps = rateLimitMaxRps;
     this.lastSeenTs = -1;
     this.stepIndex = 0;
     this.frames_ = new Array(capacity);
@@ -74,15 +74,15 @@ export class TimelineBuffer {
   }
 
   // keep the hot path allocation-free: recycle packet objects via a free list.
-// A packet is only returned to the pool once its owning frame falls off the
-// ring, so no live frame is ever mutated — scrubber history stays immutable.
-acquirePacket_() {
-  return this.freeList_.pop() || makePacket(); // only allocates when pool runs dry
-}
+  // A packet is only returned to the pool once its owning frame falls off the
+  // ring, so no live frame is ever mutated — scrubber history stays immutable.
+  acquirePacket_() {
+    return this.freeList_.pop() || makePacket(); // only allocates when pool runs dry
+  }
 
-releasePackets_(arr) {
-  for (const p of arr) this.freeList_.push(p);
-}
+  releasePackets_(arr) {
+    for (const p of arr) this.freeList_.push(p);
+  }
 
   frames() {
     const out = [];
@@ -99,8 +99,14 @@ releasePackets_(arr) {
   ingest(wsFrame) {
     if (!wsFrame) return;
     if (wsFrame.algorithm) this.setAlgorithm(wsFrame.algorithm);
+    const decisions = wsFrame.decisions || [];
+    // ts_ms is a per-process steady clock: a non-empty tick whose newest decision
+    // lands below the watermark means the engine restarted — reset the watermark
+    if (decisions.length && decisions[decisions.length - 1].ts_ms < this.lastSeenTs) {
+      this.lastSeenTs = -1;
+    }
     // the broadcaster re-sends the whole ring each tick: keep only fresh ones
-    const fresh = (wsFrame.decisions || []).filter((d) => d.ts_ms > this.lastSeenTs);
+    const fresh = decisions.filter((d) => d.ts_ms > this.lastSeenTs);
     if (fresh.length) {
       fresh.sort((a, b) => a.ts_ms - b.ts_ms);
       this.lastSeenTs = fresh[fresh.length - 1].ts_ms;
@@ -142,11 +148,11 @@ releasePackets_(arr) {
     frame.stepIndex = this.stepIndex;
     frame.timestampMs = this.stepIndex * FRAME_MS;
     frame.activeAlgorithm = this.activeAlgorithm;
-    // last decision of this sub-frame (or carry the running state forward)
+    // last decision of this sub-frame; an empty sub-frame resets metrics to 0
     const last = slice[slice.length - 1];
     frame.algorithmMetrics = {
       tokensRemaining: last && last.tokens !== undefined ? last.tokens : 0,
-      windowRate: last ? last.window_count : 0,
+      windowRate: last && last.window_count !== undefined ? last.window_count : 0,
     };
     // materialize pooled packet objects with computed progress — every frame
     // owns its own copies, so historical frames stay immutable for the scrubber
