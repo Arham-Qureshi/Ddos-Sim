@@ -31,6 +31,13 @@ class DecisionRecord(BaseModel):
     tokens: float = 0
     window_count: int = 0
 
+class VipStat(BaseModel):
+    vip: str
+    active_rps: int = 0
+    sent: int = 0
+    blocked: int = 0
+    worker_id: int = 0
+
 class TelemetryFrame(BaseModel):
     model_config = ConfigDict(extra="ignore")
     timestamp: int
@@ -38,6 +45,7 @@ class TelemetryFrame(BaseModel):
     recent_blocks: list[RecentBlock] = []
     algorithm: str = "token_bucket"
     decisions: list[DecisionRecord] = []
+    vip_stats: list[VipStat] = []
 
 class BlockRecord(BaseModel):
     vip: str
@@ -79,6 +87,7 @@ class WsFrame(BaseModel):
     blocks: list[BlockRecord] = []
     algorithm: str = "token_bucket"
     decisions: list[DecisionRecord] = []
+    vip_stats: list[VipStat] = []
 
 class BlocksResponse(BaseModel):
     engine_connected: bool
