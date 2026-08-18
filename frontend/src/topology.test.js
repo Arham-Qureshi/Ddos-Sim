@@ -31,14 +31,19 @@ describe("buildTopology", () => {
   const size = { width: 800, height: 400 };
   const topo = buildTopology(3, size.width, size.height);
 
-  it("anchors the host left of center and the target right of center", () => {
-    expect(topo.host).toMatchObject({ x: 160, y: 200 });
-    expect(topo.target).toMatchObject({ x: 640, y: 200 });
+  it("centers the target and anchors the host bottom-left", () => {
+    expect(topo.target).toMatchObject({ x: 400, y: 200 });
+    expect(topo.host).toMatchObject({ x: 96, y: 340 });
   });
 
-  it("keeps the ring radius inside the canvas", () => {
-    expect(topo.radius).toBe(Math.min(0.2 * 800, 0.4 * 400));
-    expect(topo.radius).toBeLessThanOrEqual(160);
+  it("keeps the orbit ring radius inside the canvas", () => {
+    expect(topo.radius).toBe(Math.min(0.34 * 800, 0.34 * 400));
+    expect(topo.radius).toBe(136);
+  });
+
+  it("scales the shield radius with the canvas", () => {
+    expect(topo.shieldRadius).toBe(Math.max(Math.min(800, 400) * 0.12, 28));
+    expect(topo.shieldRadius).toBe(48);
   });
 
   it("produces one bot per requested node", () => {
@@ -58,9 +63,9 @@ describe("buildTopology", () => {
     expect(buildTopology(99, size.width, size.height).bots).toHaveLength(BOT_MAX);
   });
 
-  it("distributes bots evenly around the ring", () => {
+  it("distributes bots evenly around the target", () => {
     const angles = topo.bots
-      .map((bot) => Math.atan2(bot.y - topo.host.y, bot.x - topo.host.x))
+      .map((bot) => Math.atan2(bot.y - topo.target.y, bot.x - topo.target.x))
       .sort((a, b) => a - b);
     for (let i = 1; i < angles.length; i++) {
       const gap = angles[i] - angles[i - 1];
@@ -68,8 +73,11 @@ describe("buildTopology", () => {
     }
   });
 
-  it("places a bot due east of the host for the first slot", () => {
-    expect(topo.bots[0].x).toBeGreaterThan(topo.host.x);
-    expect(topo.bots[0].y).toBeCloseTo(topo.host.y, 6);
+  it("places bot 1 at the top of the ring", () => {
+    const b = topo.bots[0];
+    expect(b.y).toBeLessThan(topo.target.y);
+    expect(Math.abs(b.x - topo.target.x)).toBeLessThan(1e-6);
+    expect(b.x).toBeCloseTo(400, 5);
+    expect(b.y).toBeCloseTo(200 - 136, 5);
   });
 });
