@@ -29,6 +29,27 @@ def test_parse_frame_valid():
     assert f.decisions[0].vip == "10.0.0.7"
 
 
+def test_parse_frame_vip_stats():
+    f = parse_frame(json.dumps({
+        "timestamp": 1,
+        "metrics": {"normal_rps": 1, "attack_rps": 0, "blocked_rps": 0,
+                    "cpu_load_pct": 1, "active_connections": 1},
+        "recent_blocks": [],
+        "algorithm": "token_bucket",
+        "decisions": [],
+        "vip_stats": [{"vip": "10.0.0.7", "active_rps": 18, "sent": 142,
+                       "blocked": 127, "worker_id": 2}],
+    }).encode())
+    assert isinstance(f, TelemetryFrame)
+    assert len(f.vip_stats) == 1
+    s = f.vip_stats[0]
+    assert s.vip == "10.0.0.7"
+    assert s.active_rps == 18
+    assert s.sent == 142
+    assert s.blocked == 127
+    assert s.worker_id == 2
+
+
 def test_parse_frame_garbage_returns_none():
     assert parse_frame(b"not json {{{") is None
     assert parse_frame(b"") is None
