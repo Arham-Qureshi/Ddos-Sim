@@ -268,6 +268,7 @@ function sparkRender(chart, points) {
 }
 
 // ---- security log (human ban clock) ----
+let pinnedBot = null; // bot the inspector is pinned to (click), survives hover-out
 let lastBlocks = [];
 const seenBannedVips = new Set(); // persistent across renders -> flash only once per new ban
 
@@ -435,7 +436,10 @@ function syncBotStrip() {
       threatMap.highlightBot(null);
       syncBotStrip();
     });
-    tile.addEventListener("click", () => inspector.preview(i));
+    tile.addEventListener("click", () => {
+      pinnedBot = i;
+      inspector.preview(i);
+    });
     els.botStrip.appendChild(tile);
   }
   const stats = statsFromFrames(timeline.frames());
@@ -839,10 +843,15 @@ threatMap.onBotHover((i, on) => {
   threatMap.highlightBot(state.hoverBot);
   syncBotStrip();
   if (on) inspector.preview(i);
+  else if (pinnedBot != null) inspector.preview(pinnedBot);
   else inspector.close();
 });
-// clicking a bot pins the inspector open
-threatMap.onBotClick((i) => inspector.preview(i));
+// clicking a bot pins the inspector open; clicking it again unpins
+threatMap.onBotClick((i) => {
+  pinnedBot = pinnedBot === i ? null : i;
+  if (pinnedBot == null) inspector.close();
+  else inspector.preview(i);
+});
 syncBotStrip(); // seed the strip tiles before the first ws frame
 
 // t13 scrubber + inspector over the t12 renderer facade
@@ -854,6 +863,8 @@ const scrubber = initScrubber({
   reduceMotion: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false,
 });
 const inspector = initNodeInspector({ els, timeline, threatMap });
+// ✕ also releases the pin so hover-out can't reopen the card
+els.inspectorClose.addEventListener("click", () => { pinnedBot = null; });
 
 // tab shell: only the visible tab repaints; going back to the command center
 // needs an explicit resize because echarts measured the panel while hidden
