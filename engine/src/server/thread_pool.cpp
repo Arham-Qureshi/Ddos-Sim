@@ -73,7 +73,7 @@ ThreadPool::ThreadPool(size_t worker_count, TelemetryStats* stats, RateLimiter* 
     : stats_(stats), rate_limiter_(rate_limiter) {
     workers_.reserve(worker_count);
     for (size_t i = 0; i < worker_count; ++i) {
-        workers_.emplace_back([this] { worker_main(); });
+        workers_.emplace_back([this, idx = static_cast<uint32_t>(i)] { worker_main(idx); });
     }
 }
 
@@ -81,7 +81,7 @@ ThreadPool::~ThreadPool() {
     stop();
 }
 
-void ThreadPool::worker_main() {
+void ThreadPool::worker_main(uint32_t worker_index) {
     for (;;) {
         int client_fd = -1;
         {
@@ -105,7 +105,7 @@ void ThreadPool::worker_main() {
         if (rate_limiter_) {
             std::string line = read_first_line(client_fd);
             std::string vip = parse_vip(line);
-            if (!vip.empty() && vip != kAdminIp && !rate_limiter_->allow(vip)) {
+            if (!vip.empty() && vip != kAdminIp && !rate_limiter_->allow(vip, worker_index)) {
                 if (stats_) {
                     stats_->attack_accepted.fetch_add(1, std::memory_order_relaxed);
                     stats_->blocked_accepted.fetch_add(1, std::memory_order_relaxed);
