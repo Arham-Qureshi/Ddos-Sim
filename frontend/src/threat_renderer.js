@@ -76,6 +76,11 @@ function canvasFallback(canvas, gsap) {
     highlightBot() {},
     onBotHover() {},
     setConnected() {},
+    setPlayhead() {},
+    setPlayback() {},
+    getPlayhead() { return 0; },
+    onBotClick() {},
+    botScreenPos() { return null; },
   });
 }
 
@@ -157,6 +162,9 @@ function pixiFacade(app, canvas, timeline, gsap, P, opts) {
   let hoverCb = null;
   let playhead = 0;
   let lastNow = null;
+  let playing = true;
+  let speed = 1;
+  let clickCb = null;
   let ambientColor = null;
   let topo = buildTopology(count, 640, 360);
   let display = dormantDisplay(topo.bots, topo.host);
@@ -227,6 +235,9 @@ function pixiFacade(app, canvas, timeline, gsap, P, opts) {
       s.on("pointerout", () => {
         hideTooltip();
         if (hoverCb) hoverCb(i, false);
+      });
+      s.on("pointerdown", () => {
+        if (clickCb) clickCb(i);
       });
       botSprites.push(s);
       nodesLayer.addChild(s);
@@ -509,8 +520,10 @@ function pixiFacade(app, canvas, timeline, gsap, P, opts) {
     lastNow = now;
     if (!visible) return; // only the visible tab spends CPU (Ticket 9)
     const live = timeline ? timeline.liveStepIndex() ?? 0 : Number.MAX_SAFE_INTEGER;
-    // live-edge: glide toward the newest frame, never past it (no snap-back)
-    playhead = reduceMotion ? live : Math.min(playhead + dtMs / FRAME_MS, live);
+    // live-edge: glide toward the newest frame, never past it (no snap-back);
+    // paused keeps the playhead put while frames + FX still render
+    if (reduceMotion) playhead = live;
+    else if (playing) playhead = Math.min(playhead + (dtMs / FRAME_MS) * speed, live);
     const frame = timeline ? pickFrame(timeline.frames(), playhead) : null;
     if (frame) renderFrame(frame, playhead);
     updateFragments(dtMs / 1000);
@@ -574,6 +587,33 @@ function pixiFacade(app, canvas, timeline, gsap, P, opts) {
     updateSweep();
   }
 
+  // scrubber drives the single existing clock; playhead stays a float so
+  // continuousProgress still glides between frames
+  function setPlayhead(step) {
+    const live = timeline ? timeline.liveStepIndex() ?? 0 : 0;
+    playhead = clamp(Number(step) || 0, 0, live);
+  }
+
+  function setPlayback({ playing: p, speed: s } = {}) {
+    playing = !!p;
+    if (s !== undefined && Number(s) > 0) speed = Number(s);
+  }
+
+  function getPlayhead() {
+    return playhead;
+  }
+
+  // node inspector: notify when a bot is clicked
+  function onBotClick(cb) {
+    clickCb = cb;
+  }
+
+  // node inspector: expose a bot's screen position for an anchored panel
+  function botScreenPos(i) {
+    const d = display[i];
+    return d ? { x: d.x, y: d.y } : null;
+  }
+
   function resize() {
     const w = canvas.clientWidth || 640;
     const h = canvas.clientHeight || 360;
@@ -594,6 +634,11 @@ function pixiFacade(app, canvas, timeline, gsap, P, opts) {
     highlightBot,
     onBotHover,
     setConnected,
+    setPlayhead,
+    setPlayback,
+    getPlayhead,
+    onBotClick,
+    botScreenPos,
     resize,
     renderFrame,
     isPixi: true,
