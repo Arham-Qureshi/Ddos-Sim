@@ -231,6 +231,62 @@ describe("initThreatRenderer pixi stage", () => {
     map.setMitigation(false);
     expect(shield.text).toBe("SHIELD OFF");
   });
+
+  it("holds the playhead when paused and still renders the frame", () => {
+    const P = makePixiStub();
+    let now = 0;
+    const frames = Array.from({ length: 6 }, (_, i) => ({
+      stepIndex: i,
+      activePackets: [{ srcIp: "10.0.0.1", botId: 1, progress: i / 6, status: "ALLOWED" }],
+    }));
+    const timeline = { frames: () => frames, liveStepIndex: () => 5 };
+    const map = initThreatRenderer({ canvas: makeCanvas(), pixi: P, timeline, clock: () => now });
+    map.setBotCount(4);
+    map.setPlayhead(3);
+    map.setPlayback({ playing: false });
+    for (let i = 0; i < 10; i++) { now += FRAME_MS; P.app.ticker.cb(); }
+    expect(map.getPlayhead()).toBe(3); // paused: never advances
+    const fx = P.app.stage.children[3].children;
+    expect(fx.some((s) => s.visible && s.alpha === 1 && s.blendMode === "add")).toBe(true);
+  });
+
+  it("advances the playhead at the chosen speed", () => {
+    const P = makePixiStub();
+    let now = 0;
+    const frames = Array.from({ length: 20 }, (_, i) => ({
+      stepIndex: i,
+      activePackets: [{ srcIp: "10.0.0.1", botId: 1, progress: i / 20, status: "ALLOWED" }],
+    }));
+    const timeline = { frames: () => frames, liveStepIndex: () => 19 };
+    const map = initThreatRenderer({ canvas: makeCanvas(), pixi: P, timeline, clock: () => now });
+    map.setBotCount(4);
+    map.setPlayhead(0);
+    map.setPlayback({ playing: true, speed: 2 });
+    for (let i = 0; i < 5; i++) { now += FRAME_MS; P.app.ticker.cb(); }
+    expect(map.getPlayhead()).toBeCloseTo(10, 5); // 5 ticks at 2x -> +10 frames
+  });
+
+  it("clamps setPlayhead to the live edge", () => {
+    const P = makePixiStub();
+    const timeline = { frames: () => [{ stepIndex: 0, activePackets: [] }], liveStepIndex: () => 7 };
+    const map = initThreatRenderer({ canvas: makeCanvas(), pixi: P, timeline });
+    map.setPlayhead(99);
+    expect(map.getPlayhead()).toBe(7);
+    map.setPlayhead(-3);
+    expect(map.getPlayhead()).toBe(0);
+  });
+
+  it("onBotClick fires with the bot index", () => {
+    const P = makePixiStub();
+    const map = initThreatRenderer({ canvas: makeCanvas(), pixi: P });
+    map.setBotCount(4);
+    const cb = vi.fn();
+    map.onBotClick(cb);
+    const nodesLayer = P.app.stage.children[2];
+    const bot = nodesLayer.children.find((s) => s.constructor.name === "Sprite" && s.tint === 0xf59e0b);
+    bot.events.pointerdown();
+    expect(cb).toHaveBeenCalledWith(0);
+  });
 });
 
 describe("threat map mission-control (arcs, sweep, ambient, tooltips)", () => {
