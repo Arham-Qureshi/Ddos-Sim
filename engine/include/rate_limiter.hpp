@@ -21,6 +21,14 @@ struct DecisionRecord {
     uint32_t window_count;  // sliding window: requests in window after the decision
 };
 
+struct VipStat {
+    std::string vip;
+    uint32_t active_rps;  // decisions from this VIP in the last 1s
+    uint32_t sent;        // cumulative lifetime accepted packets
+    uint32_t blocked;     // cumulative lifetime dropped packets
+    uint32_t worker_id;   // server worker thread that handled the last decision
+};
+
 struct RateLimiterConfig {
     uint32_t max_rps = 20;
     uint32_t block_seconds = 10;
@@ -37,12 +45,14 @@ public:
     RateLimiter& operator=(const RateLimiter&) = delete;
 
     // true = pass (serve), false = drop (ban + close).
-    bool allow(const std::string& vip);
+    bool allow(const std::string& vip, uint32_t worker_id);
     // Snapshot of the most recent bans, newest last, capped at 16.
     std::vector<RecentBlock> recent_blocks() const;
 
     // Snapshot of the most recent per-packet decisions, newest last, capped at 128.
     std::vector<DecisionRecord> recent_decisions() const;
+    // Per-VIP running stats snapshot (vip -> rps/counters/worker).
+    std::vector<VipStat> vip_stats() const;
 
     // Mitigation master switch: when disabled, allow() always passes.
     void set_enabled(bool on);
@@ -63,7 +73,7 @@ private:
     bool allow_sliding_window(const std::string& vip, uint64_t now_ms, uint32_t& window_out);
     void ban(const std::string& vip, uint64_t now_ms);
     void record_decision(const std::string& vip, bool allowed, uint64_t now_ms,
-                         double tokens, uint32_t window_count);
+                         double tokens, uint32_t window_count, uint32_t worker_id);
     void maybe_prune(uint64_t now_ms);
 
     RateLimiterConfig cfg_;
@@ -78,6 +88,14 @@ private:
         uint64_t last_refill_ms = 0;
     };
     std::unordered_map<std::string, BucketState> buckets_;
+
+    struct VipAccum {
+        uint32_t sent = 0;
+        uint32_t blocked = 0;
+        uint32_t last_worker = 0;
+        std::deque<uint64_t> recent_ts;  // decision timestamps (ms)
+    };
+    std::unordered_map<std::string, VipAccum> vip_stats_;
 
     std::unordered_map<std::string, std::deque<uint64_t>> windows_;
 
