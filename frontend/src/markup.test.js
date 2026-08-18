@@ -120,3 +120,27 @@ describe("index.html mission-control strip (t14)", () => {
     expect(html).toContain('id="counter-blocked"');
   });
 });
+
+describe("index.html t13 scrubber + node inspector", () => {
+  it("has the scrubber bar with all controls", () => {
+    expect(html).toContain('id="scrub-prev"');
+    expect(html).toContain('id="scrub-play"');
+    expect(html).toContain('id="scrub-next"');
+    expect(html).toContain('id="scrub-frame"');
+    expect(html).toContain('id="scrub-range"');
+    expect(html).toContain('id="scrub-speed"');
+    expect(html).toContain('id="scrub-live"');
+    expect(html).toContain('id="scrub-banner"');
+  });
+
+  it("has the node inspector card fields", () => {
+    expect(html).toContain('id="inspector-card"');
+    expect(html).toContain('id="inspector-close"');
+    expect(html).toContain('id="inspector-vip"');
+    expect(html).toContain('id="inspector-worker"');
+    expect(html).toContain('id="inspector-rps"');
+    expect(html).toContain('id="inspector-sent"');
+    expect(html).toContain('id="inspector-blocked"');
+    expect(html).toContain('id="inspector-status"');
+  });
+});
