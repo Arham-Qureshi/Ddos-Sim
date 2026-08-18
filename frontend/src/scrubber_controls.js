@@ -3,7 +3,6 @@
 // the renderer facade (setPlayhead / setPlayback / getPlayhead) so there is
 // exactly one clock owner. Scrubbing pauses; LIVE reattaches at the live edge.
 
-import { FRAME_MS } from "./timeline_buffer.js";
 import { pickFrame } from "./particles.js";
 
 export function initScrubber({ els, timeline, threatMap, gsap = null, reduceMotion = false } = {}) {
