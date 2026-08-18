@@ -130,3 +130,21 @@ def test_ws_telemetry_carries_algorithm_and_decisions():
             assert d["ts_ms"] == 500
             assert d["tokens"] == 0.0
             assert d["window_count"] == 2
+
+
+def test_ws_telemetry_carries_vip_stats():
+    app = _app_with_frame()
+    app.state.state.latest = TelemetryFrame(
+        timestamp=1,
+        metrics=Metrics(normal_rps=2),
+        decisions=[],
+        vip_stats=[
+            {"vip": "10.0.0.3", "active_rps": 9, "sent": 40, "blocked": 3, "worker_id": 1}
+        ],
+    )
+    with TestClient(app) as c:
+        with c.websocket_connect("/api/ws/telemetry") as ws:
+            data = ws.receive_json()
+            assert data["vip_stats"] == [
+                {"vip": "10.0.0.3", "active_rps": 9, "sent": 40, "blocked": 3, "worker_id": 1}
+            ]
