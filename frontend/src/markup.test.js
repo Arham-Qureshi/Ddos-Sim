@@ -81,3 +81,42 @@ describe("index.html threat map (Ticket 10)", () => {
     expect(gsapIdx).toBeLessThan(moduleIdx);
   });
 });
+
+describe("index.html threat map particles (Ticket 12)", () => {
+  it("loads vendored pixi before the dashboard module", () => {
+    const moduleIdx = html.indexOf('type="module"');
+    const pixiIdx = html.indexOf("vendor/pixi.min.js");
+    expect(pixiIdx).toBeGreaterThan(-1);
+    expect(pixiIdx).toBeLessThan(moduleIdx);
+  });
+
+  it("legend explains allowed / dropped / shield colors", () => {
+    expect(html).toContain(">allowed</span>");
+    expect(html).toContain(">dropped</span>");
+    expect(html).toContain(">shield</span>");
+  });
+
+  it("caption describes live playback and the hover tooltip", () => {
+    expect(html).toContain("replay the engine's live decisions in real time");
+    expect(html).toContain("hover a bot for its send / blocked counts");
+  });
+});
+
+describe("index.html mission-control strip (t14)", () => {
+  it("has the threat banner with dot, label and detail", () => {
+    expect(html).toContain('id="banner-dot"');
+    expect(html).toContain('id="banner-label"');
+    expect(html).toContain('id="banner-detail"');
+  });
+
+  it("has the bot strip and the two sparkline canvases", () => {
+    expect(html).toContain('id="bot-strip"');
+    expect(html).toContain('id="spark-attack"');
+    expect(html).toContain('id="spark-blocked"');
+  });
+
+  it("has the allowed / blocked counters", () => {
+    expect(html).toContain('id="counter-allowed"');
+    expect(html).toContain('id="counter-blocked"');
+  });
+});
