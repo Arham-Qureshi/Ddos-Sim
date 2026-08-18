@@ -17,6 +17,19 @@
       --normal: #38bdf8;
       --attack: #f59e0b;
       --blocked: #fb7185;
+      --shield: #34d399;
+      --neutral: #64748b;
+    }
+
+    /* reduced-motion: keep data updates, drop chrome animation entirely */
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+      }
     }
 
     html,
@@ -101,6 +114,12 @@
     .text-\[10px\] {
       font-size: 10px;
     }
+
+    /* v3 palette colors the vendored tailwind v2 build can't JIT (Ticket 14 strip) */
+    .text-sky-300 { color: var(--normal); }
+    .bg-sky-400 { background: var(--normal); }
+    .text-slate-500 { color: var(--muted); }
+    .text-rose-300 { color: var(--blocked); }
 
     .bg-\[\#0a0e14\] {
       background-color: #0a0e14;
@@ -351,12 +370,43 @@
         <h2 class="mono text-sm font-semibold uppercase tracking-widest text-slate-300">Threat Map</h2>
         <div class="flex gap-4 text-xs">
           <span class="flex items-center gap-1.5"><span class="h-2 w-2 rounded-full" style="background:var(--normal)"></span>target</span>
-          <span class="flex items-center gap-1.5"><span class="h-2 w-2 rounded-full" style="background:#64748b"></span>host</span>
+          <span class="flex items-center gap-1.5"><span class="h-2 w-2 rounded-full" style="background:var(--neutral)"></span>host</span>
           <span class="flex items-center gap-1.5"><span class="h-2 w-2 rounded-full" style="background:var(--attack)"></span>bots (attack)</span>
+          <span class="flex items-center gap-1.5"><span class="h-2 w-2 rounded-full" style="background:var(--normal)"></span>allowed</span>
+          <span class="flex items-center gap-1.5"><span class="h-2 w-2 rounded-full" style="background:var(--blocked)"></span>dropped</span>
+          <span class="flex items-center gap-1.5"><span class="h-2 w-2 rounded-full" style="background:var(--shield)"></span>shield</span>
+        </div>
+      </div>
+      <!-- mission-control instrument strip: verdict banner, bot strip, sparklines -->
+      <div class="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div class="panel flex items-center gap-3 rounded-lg px-4 py-2">
+          <span id="banner-dot" class="h-3 w-3 rounded-full bg-sky-400" style="box-shadow:0 0 10px var(--normal)"></span>
+          <div class="flex flex-col">
+            <span id="banner-label" class="mono text-sm font-semibold uppercase tracking-widest text-sky-300">NOMINAL</span>
+            <span id="banner-detail" class="mono text-xs text-slate-500">no traffic blocked</span>
+          </div>
+        </div>
+        <div class="panel rounded-lg px-4 py-2">
+          <div class="mb-1 flex items-center justify-between">
+            <span class="mono text-[10px] uppercase tracking-widest text-slate-500">Attack</span>
+            <span id="counter-allowed" class="mono text-xs text-sky-300">0000</span>
+          </div>
+          <canvas id="spark-attack" width="240" height="32" class="h-8 w-full" aria-label="attack rate sparkline"></canvas>
+        </div>
+        <div class="panel rounded-lg px-4 py-2">
+          <div class="mb-1 flex items-center justify-between">
+            <span class="mono text-[10px] uppercase tracking-widest text-slate-500">Blocked</span>
+            <span id="counter-blocked" class="mono text-xs text-rose-300">0000</span>
+          </div>
+          <canvas id="spark-blocked" width="240" height="32" class="h-8 w-full" aria-label="blocked rate sparkline"></canvas>
+        </div>
+        <div class="panel rounded-lg px-4 py-2">
+          <p class="mono mb-1 text-[10px] uppercase tracking-widest text-slate-500">Bots</p>
+          <div id="bot-strip" class="flex flex-wrap items-center gap-1" aria-label="bot activity"></div>
         </div>
       </div>
       <canvas id="threat-map-canvas" class="h-[340px] w-full" aria-label="attack topology map"></canvas>
-      <p class="mt-2 text-xs text-slate-500">bots fan out from the attacker host when an attack runs</p>
+      <p class="mt-2 text-xs text-slate-500">packets replay the engine's live decisions in real time · hover a bot for its send / blocked counts — dropped packets shatter on the shield</p>
     </section>
 
     <!-- Tab 2: Command Center — the live metrics dashboard -->
@@ -483,6 +533,7 @@
 
   <script src="vendor/echarts.min.js"></script>
   <script src="vendor/gsap.min.js"></script>
+  <script src="vendor/pixi.min.js"></script>
   <script type="module" src="src/dashboard.js"></script>
 </body>
 
