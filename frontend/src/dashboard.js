@@ -12,6 +12,8 @@ import { TimelineBuffer } from "./timeline_buffer.js";
 import { threatLevel } from "./threat_level.js";
 import { drawSparkline } from "./sparkline.js";
 import { statsFromFrames } from "./threat_stats.js";
+import { initScrubber } from "./scrubber_controls.js";
+import { initNodeInspector } from "./node_inspector.js";
 
 const STALE_MS = 2500; // mirror backend stale_threshold_s
 const WS_TICK_MS = 500; // server pushes every 0.5s
@@ -90,6 +92,22 @@ const els = {
   sparkBlocked: $("spark-blocked"),
   counterAllowed: $("counter-allowed"),
   counterBlocked: $("counter-blocked"),
+  scrubPrev: $("scrub-prev"),
+  scrubPlay: $("scrub-play"),
+  scrubNext: $("scrub-next"),
+  scrubFrame: $("scrub-frame"),
+  scrubRange: $("scrub-range"),
+  scrubSpeed: $("scrub-speed"),
+  scrubLive: $("scrub-live"),
+  scrubBanner: $("scrub-banner"),
+  inspectorCard: $("inspector-card"),
+  inspectorClose: $("inspector-close"),
+  inspectorVip: $("inspector-vip"),
+  inspectorWorker: $("inspector-worker"),
+  inspectorRps: $("inspector-rps"),
+  inspectorSent: $("inspector-sent"),
+  inspectorBlocked: $("inspector-blocked"),
+  inspectorStatus: $("inspector-status"),
 };
 
 // ---- status pill + freshness gauge ----
@@ -417,6 +435,7 @@ function syncBotStrip() {
       threatMap.highlightBot(null);
       syncBotStrip();
     });
+    tile.addEventListener("click", () => inspector.preview(i));
     els.botStrip.appendChild(tile);
   }
   const stats = statsFromFrames(timeline.frames());
@@ -486,6 +505,7 @@ function connect() {
     timeline.ingest(frame);
     threatMap.setBlockedRate(frame.blocked_rps ?? 0); // shield intensity
     renderThreatStrip(frame); // banner / sparklines / counters / bot tiles
+    inspector.setFrame(frame); // live per-VIP stats for the inspector card
     render();
     renderLogWith(frame.blocks || []);
     updateMetrics(frame);
@@ -818,8 +838,22 @@ threatMap.onBotHover((i, on) => {
   state.hoverBot = on ? i : null;
   threatMap.highlightBot(state.hoverBot);
   syncBotStrip();
+  if (on) inspector.preview(i);
+  else inspector.close();
 });
+// clicking a bot pins the inspector open
+threatMap.onBotClick((i) => inspector.preview(i));
 syncBotStrip(); // seed the strip tiles before the first ws frame
+
+// t13 scrubber + inspector over the t12 renderer facade
+const scrubber = initScrubber({
+  els,
+  timeline,
+  threatMap,
+  gsap: window.gsap || null,
+  reduceMotion: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false,
+});
+const inspector = initNodeInspector({ els, timeline, threatMap });
 
 // tab shell: only the visible tab repaints; going back to the command center
 // needs an explicit resize because echarts measured the panel while hidden
@@ -827,6 +861,7 @@ initTabs(document);
 document.addEventListener("tabchange", (e) => {
   state.activeTab = e.detail.tab;
   threatMap.setVisible(state.activeTab === "threat-map"); // only visible tab paints (Ticket 9)
+  scrubber.setVisible(state.activeTab === "threat-map");
   if (state.activeTab === "command-center") {
     state.chart && state.chart.resize();
     state.sparkConns && state.sparkConns.resize();
