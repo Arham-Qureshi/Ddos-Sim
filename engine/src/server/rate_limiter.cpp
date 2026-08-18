@@ -37,7 +37,7 @@ RateLimiterConfig::Algorithm RateLimiter::algorithm() const {
         algorithm_.load(std::memory_order_relaxed));
 }
 
-bool RateLimiter::allow(const std::string& vip) {
+bool RateLimiter::allow(const std::string& vip, uint32_t worker_id) {
     if (!enabled_.load(std::memory_order_relaxed)) {
         return true;  // mitigation off: everyone passes
     }
@@ -49,7 +49,7 @@ bool RateLimiter::allow(const std::string& vip) {
         maybe_prune(now);
     }
     if (is_banned(vip, now)) {
-        record_decision(vip, false, now, 0.0, 0);  // already-banned drop
+        record_decision(vip, false, now, 0.0, 0, worker_id);  // already-banned drop
         return false;
     }
 
@@ -64,7 +64,7 @@ bool RateLimiter::allow(const std::string& vip) {
             ok = allow_sliding_window(vip, now, window_count);
             break;
     }
-    record_decision(vip, ok, now, tokens, window_count);
+    record_decision(vip, ok, now, tokens, window_count, worker_id);
     if (!ok) {
         ban(vip, now);
     }
@@ -107,17 +107,40 @@ void RateLimiter::ban(const std::string& vip, uint64_t now_ms) {
 }
 
 void RateLimiter::record_decision(const std::string& vip, bool allowed, uint64_t now_ms,
-                                  double tokens, uint32_t window_count) {
+                                  double tokens, uint32_t window_count, uint32_t worker_id) {
     std::unique_lock<std::shared_mutex> lock(mutex_);
     decisions_.push_back(DecisionRecord{vip, allowed, now_ms, tokens, window_count});
     while (decisions_.size() > kMaxRecentDecisions) {
         decisions_.pop_front();
     }
+    VipAccum& a = vip_stats_[vip];
+    if (allowed) {
+        a.sent++;
+    } else {
+        a.blocked++;
+    }
+    a.last_worker = worker_id;
+    a.recent_ts.push_back(now_ms);
 }
 
 std::vector<DecisionRecord> RateLimiter::recent_decisions() const {
     std::shared_lock<std::shared_mutex> lock(mutex_);
     return std::vector<DecisionRecord>(decisions_.begin(), decisions_.end());
+}
+
+std::vector<VipStat> RateLimiter::vip_stats() const {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    uint64_t now = now_ms();
+    std::vector<VipStat> out;
+    out.reserve(vip_stats_.size());
+    for (const auto& [vip, a] : vip_stats_) {
+        uint32_t rps = 0;
+        for (uint64_t t : a.recent_ts) {
+            if (now - t < kWindowMs) rps++;
+        }
+        out.push_back(VipStat{vip, rps, a.sent, a.blocked, a.last_worker});
+    }
+    return out;
 }
 
 bool RateLimiter::allow_token_bucket(const std::string& vip, uint64_t now_ms,
@@ -172,6 +195,17 @@ void RateLimiter::maybe_prune(uint64_t now_ms) {
         }
         if (it->second.empty()) {
             it = windows_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    for (auto it = vip_stats_.begin(); it != vip_stats_.end();) {
+        std::deque<uint64_t>& ts = it->second.recent_ts;
+        while (!ts.empty() && now_ms - ts.front() >= 2 * kWindowMs) {
+            ts.pop_front();
+        }
+        if (ts.empty()) {
+            it = vip_stats_.erase(it);
         } else {
             ++it;
         }

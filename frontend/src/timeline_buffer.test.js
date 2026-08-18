@@ -43,6 +43,15 @@ describe("TimelineBuffer basics", () => {
     expect(b.currentFrame()).toBe(last);
   });
 
+  it("liveStepIndex tracks the newest emitted frame and is null when empty", () => {
+    const b = new TimelineBuffer();
+    expect(b.liveStepIndex()).toBeNull();
+    b.ingest(tick()); // emits SUB_FRAMES_PER_TICK frames (5)
+    expect(b.liveStepIndex()).toBe(SUB_FRAMES_PER_TICK - 1);
+    b.ingest(tick());
+    expect(b.liveStepIndex()).toBe(2 * SUB_FRAMES_PER_TICK - 1);
+  });
+
   it("clear resets everything", () => {
     const b = new TimelineBuffer();
     b.ingest(tick());

@@ -31,6 +31,7 @@ def _build_frame(state) -> WsFrame | None:
         blocks=blocks,
         algorithm=latest.algorithm,
         decisions=[d.model_dump() for d in latest.decisions],
+        vip_stats=[s.model_dump() for s in latest.vip_stats],
     )
 
 

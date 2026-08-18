@@ -96,6 +96,12 @@ export class TimelineBuffer {
     return this.length ? this.frames_[this.write_ === 0 ? this.capacity - 1 : this.write_ - 1] : null;
   }
 
+  // stepIndex of the newest emitted frame; the renderer clamps its playhead to
+  // this so live playback never runs ahead of the data stream (no snap-back)
+  liveStepIndex() {
+    return this.length ? this.stepIndex - 1 : null;
+  }
+
   ingest(wsFrame) {
     if (!wsFrame) return;
     if (wsFrame.algorithm) this.setAlgorithm(wsFrame.algorithm);

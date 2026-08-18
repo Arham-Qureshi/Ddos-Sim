@@ -81,3 +81,66 @@ describe("index.html threat map (Ticket 10)", () => {
     expect(gsapIdx).toBeLessThan(moduleIdx);
   });
 });
+
+describe("index.html threat map particles (Ticket 12)", () => {
+  it("loads vendored pixi before the dashboard module", () => {
+    const moduleIdx = html.indexOf('type="module"');
+    const pixiIdx = html.indexOf("vendor/pixi.min.js");
+    expect(pixiIdx).toBeGreaterThan(-1);
+    expect(pixiIdx).toBeLessThan(moduleIdx);
+  });
+
+  it("legend explains allowed / dropped / shield colors", () => {
+    expect(html).toContain(">allowed</span>");
+    expect(html).toContain(">dropped</span>");
+    expect(html).toContain(">shield</span>");
+  });
+
+  it("caption describes live playback and the hover tooltip", () => {
+    expect(html).toContain("replay the engine's live decisions in real time");
+    expect(html).toContain("hover a bot for its send / blocked counts");
+  });
+});
+
+describe("index.html mission-control strip (t14)", () => {
+  it("has the threat banner with dot, label and detail", () => {
+    expect(html).toContain('id="banner-dot"');
+    expect(html).toContain('id="banner-label"');
+    expect(html).toContain('id="banner-detail"');
+  });
+
+  it("has the bot strip and the two sparkline canvases", () => {
+    expect(html).toContain('id="bot-strip"');
+    expect(html).toContain('id="spark-attack"');
+    expect(html).toContain('id="spark-blocked"');
+  });
+
+  it("has the allowed / blocked counters", () => {
+    expect(html).toContain('id="counter-allowed"');
+    expect(html).toContain('id="counter-blocked"');
+  });
+});
+
+describe("index.html t13 scrubber + node inspector", () => {
+  it("has the scrubber bar with all controls", () => {
+    expect(html).toContain('id="scrub-prev"');
+    expect(html).toContain('id="scrub-play"');
+    expect(html).toContain('id="scrub-next"');
+    expect(html).toContain('id="scrub-frame"');
+    expect(html).toContain('id="scrub-range"');
+    expect(html).toContain('id="scrub-speed"');
+    expect(html).toContain('id="scrub-live"');
+    expect(html).toContain('id="scrub-banner"');
+  });
+
+  it("has the node inspector card fields", () => {
+    expect(html).toContain('id="inspector-card"');
+    expect(html).toContain('id="inspector-close"');
+    expect(html).toContain('id="inspector-vip"');
+    expect(html).toContain('id="inspector-worker"');
+    expect(html).toContain('id="inspector-rps"');
+    expect(html).toContain('id="inspector-sent"');
+    expect(html).toContain('id="inspector-blocked"');
+    expect(html).toContain('id="inspector-status"');
+  });
+});

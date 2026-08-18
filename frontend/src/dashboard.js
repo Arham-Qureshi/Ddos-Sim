@@ -7,13 +7,19 @@ import {
 } from "./telemetry.js";
 import { initTabs } from "./tabs.js";
 import { initAdminPanel } from "./admin_panel.js";
-import { initThreatMap } from "./threat_map.js";
+import { initThreatRenderer } from "./threat_renderer.js";
 import { TimelineBuffer } from "./timeline_buffer.js";
+import { threatLevel } from "./threat_level.js";
+import { drawSparkline } from "./sparkline.js";
+import { statsFromFrames } from "./threat_stats.js";
+import { initScrubber } from "./scrubber_controls.js";
+import { initNodeInspector } from "./node_inspector.js";
 
 const STALE_MS = 2500; // mirror backend stale_threshold_s
 const WS_TICK_MS = 500; // server pushes every 0.5s
 const WINDOW_MS = WINDOW_CAPACITY * WS_TICK_MS; // fixed 60s rolling window
 const MAX_RECONNECT_BACKOFF = 8000;
+const SPARK_CAP = 120; // ~1 minute of strip sparkline history at 0.5s ticks
 
 const state = {
   series: null,
@@ -37,6 +43,10 @@ const state = {
   lastAttackAt: 0,
   seedRendered: false,
   activeTab: "command-center", // visible tab; only it repaints (Ticket 9)
+  sparkAttack: [], // rolling attack-rps series for the strip sparkline
+  sparkBlocked: [], // rolling blocked-rps series for the strip sparkline
+  bots: 8, // last known bot count, drives the strip tiles
+  hoverBot: null, // bot index hovered on the map or the strip (highlight sync)
 };
 
 const $ = (id) => document.getElementById(id);
@@ -74,6 +84,30 @@ const els = {
   sidebarBaseline: $("baseline-toggle"),
   sidebarAlgorithm: $("algorithm-select"),
   sidebarEmergency: $("emergency-stop"),
+  bannerDot: $("banner-dot"),
+  bannerLabel: $("banner-label"),
+  bannerDetail: $("banner-detail"),
+  botStrip: $("bot-strip"),
+  sparkAttack: $("spark-attack"),
+  sparkBlocked: $("spark-blocked"),
+  counterAllowed: $("counter-allowed"),
+  counterBlocked: $("counter-blocked"),
+  scrubPrev: $("scrub-prev"),
+  scrubPlay: $("scrub-play"),
+  scrubNext: $("scrub-next"),
+  scrubFrame: $("scrub-frame"),
+  scrubRange: $("scrub-range"),
+  scrubSpeed: $("scrub-speed"),
+  scrubLive: $("scrub-live"),
+  scrubBanner: $("scrub-banner"),
+  inspectorCard: $("inspector-card"),
+  inspectorClose: $("inspector-close"),
+  inspectorVip: $("inspector-vip"),
+  inspectorWorker: $("inspector-worker"),
+  inspectorRps: $("inspector-rps"),
+  inspectorSent: $("inspector-sent"),
+  inspectorBlocked: $("inspector-blocked"),
+  inspectorStatus: $("inspector-status"),
 };
 
 // ---- status pill + freshness gauge ----
@@ -234,6 +268,7 @@ function sparkRender(chart, points) {
 }
 
 // ---- security log (human ban clock) ----
+let pinnedBot = null; // bot the inspector is pinned to (click), survives hover-out
 let lastBlocks = [];
 const seenBannedVips = new Set(); // persistent across renders -> flash only once per new ban
 
@@ -334,6 +369,98 @@ function renderHealth(health) {
   els.uptime.textContent = health ? `${Math.round(health.uptime_s)}s` : "—";
 }
 
+// ---- threat-map instrument strip (t14) ----
+function hexColor(n) {
+  return `#${n.toString(16).padStart(6, "0")}`;
+}
+
+// verdict banner + sparklines + rolling counters + bot tiles; runs once per WS
+// tick so the strip always matches the frame that just arrived
+function renderThreatStrip(frame) {
+  const lvl = threatLevel(frame.blocked_rps ?? 0, state.config.rateLimitMaxRps);
+  const color = hexColor(lvl.color);
+  els.bannerLabel.textContent = lvl.label;
+  els.bannerDetail.textContent = lvl.detail;
+  els.bannerDot.style.background = color;
+  els.bannerDot.style.boxShadow = `0 0 10px ${color}`;
+
+  state.sparkAttack.push(frame.attack_rps ?? 0);
+  state.sparkBlocked.push(frame.blocked_rps ?? 0);
+  if (state.sparkAttack.length > SPARK_CAP) state.sparkAttack.shift();
+  if (state.sparkBlocked.length > SPARK_CAP) state.sparkBlocked.shift();
+  drawSparkline(els.sparkAttack.getContext("2d"), state.sparkAttack, {
+    width: els.sparkAttack.width,
+    height: els.sparkAttack.height,
+    color: "#f59e0b",
+    stroke: 1.5,
+  });
+  drawSparkline(els.sparkBlocked.getContext("2d"), state.sparkBlocked, {
+    width: els.sparkBlocked.width,
+    height: els.sparkBlocked.height,
+    color: "#fb7185",
+    stroke: 1.5,
+  });
+
+  const stats = statsFromFrames(timeline.frames());
+  els.counterAllowed.textContent = String(stats.allowed).padStart(4, "0");
+  els.counterBlocked.textContent = String(stats.blocked).padStart(4, "0");
+  syncBotStrip();
+}
+
+// one tile per bot: counts the recent window, lights up under block pressure,
+// and follows the canvas highlight (and vice-versa) so hover never disconnects
+function syncBotStrip() {
+  const n = state.bots;
+  while (els.botStrip.children.length > n) els.botStrip.removeChild(els.botStrip.lastChild);
+  while (els.botStrip.children.length < n) {
+    const i = els.botStrip.children.length;
+    const tile = document.createElement("span");
+    Object.assign(tile.style, {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      height: "24px",
+      minWidth: "22px",
+      padding: "0 4px",
+      borderRadius: "4px",
+      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+      fontSize: "10px",
+    });
+    tile.addEventListener("mouseenter", () => {
+      state.hoverBot = i;
+      threatMap.highlightBot(i);
+      syncBotStrip();
+    });
+    tile.addEventListener("mouseleave", () => {
+      state.hoverBot = null;
+      threatMap.highlightBot(null);
+      syncBotStrip();
+    });
+    tile.addEventListener("click", () => {
+      pinnedBot = i;
+      inspector.preview(i);
+    });
+    els.botStrip.appendChild(tile);
+  }
+  const stats = statsFromFrames(timeline.frames());
+  for (let i = 0; i < n; i++) {
+    const tile = els.botStrip.children[i];
+    const e = stats.byBot.get(i + 1) || { sent: 0, blocked: 0 };
+    tile.textContent = `${i + 1}`;
+    tile.title = `10.0.0.${i + 1} · ${e.sent} sent · ${e.blocked} blocked`;
+    if (i === state.hoverBot) {
+      tile.style.background = "rgba(100,116,139,0.6)";
+      tile.style.color = "#ffffff";
+    } else if (e.blocked > 0) {
+      tile.style.background = "rgba(136,19,55,0.6)";
+      tile.style.color = "#fda4af";
+    } else {
+      tile.style.background = "#1e293b";
+      tile.style.color = "#94a3b8";
+    }
+  }
+}
+
 // ---- websocket ----
 function wsUrl() {
   const base = window.__API_BASE__ || "";
@@ -355,6 +482,7 @@ function connect() {
 
   ws.onopen = () => {
     state.backoff = 500;
+    threatMap.setConnected(true); // resume the radar sweep
     setStatus("connecting", "syncing…");
     seedFromRest();
     refreshConfigAndHealth();
@@ -379,6 +507,9 @@ function connect() {
     ingestFrame(frame, state.series);
     timeline.setAlgorithm(state.algorithm);
     timeline.ingest(frame);
+    threatMap.setBlockedRate(frame.blocked_rps ?? 0); // shield intensity
+    renderThreatStrip(frame); // banner / sparklines / counters / bot tiles
+    inspector.setFrame(frame); // live per-VIP stats for the inspector card
     render();
     renderLogWith(frame.blocks || []);
     updateMetrics(frame);
@@ -387,6 +518,7 @@ function connect() {
   };
 
   ws.onclose = () => {
+    threatMap.setConnected(false); // radar sweep must not fake a scan offline
     setStatus("down", "sim went dark — reconnecting");
     scheduleReconnect();
   };
@@ -489,6 +621,7 @@ async function syncControlState() {
     state.mitigationOn = Boolean(status.mitigation_on);
     state.algorithm = status.algorithm === "sliding_window" ? "sliding_window" : "token_bucket";
   }
+  threatMap.setMitigation(state.mitigationOn); // shield ring follows the engine
   if (state.attackActive !== wasRunning) handleAttackWindowChange();
   if (state.mitigationOn !== wasMitigation) {
     pushEvent("mitigation", `rate-limit mitigation → ${state.mitigationOn ? "on" : "off"}`);
@@ -685,20 +818,61 @@ const panel = initAdminPanel({
   baseline: (b) => handleBaseline(b),
   algorithm: (alg) => handleAlgorithm(alg),
   emergency: () => handleEmergency(),
-  paramsChange: (params) => threatMap.setBotCount(params.bots),
+  paramsChange: (params) => {
+    state.bots = Number(params.bots) || 8;
+    threatMap.setBotCount(state.bots);
+    syncBotStrip();
+  },
 });
-
-// threat map (Ticket 10): bot slider re-layouts, attack state fans bots out
-const threatMap = initThreatMap({ canvas: $("threat-map-canvas") });
 
 // timeline buffer (Ticket 11): captures per-packet decisions for t12/t13
 const timeline = new TimelineBuffer({ rateLimitMaxRps: state.config?.rateLimitMaxRps ?? 2 });
+
+// threat map (Ticket 12): PixiJS WebGL when available, else the t10 canvas 2d
+// reduceMotion drops effects (streaks, shield spin, pulses) but keeps live data
+const threatMap = initThreatRenderer({
+  canvas: $("threat-map-canvas"),
+  timeline,
+  gsap: window.gsap || null,
+  reduceMotion: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false,
+  rateLimitMaxRps: state.config.rateLimitMaxRps,
+});
+// hover sync between the canvas bots and the strip tiles
+threatMap.onBotHover((i, on) => {
+  state.hoverBot = on ? i : null;
+  threatMap.highlightBot(state.hoverBot);
+  syncBotStrip();
+  if (on) inspector.preview(i);
+  else if (pinnedBot != null) inspector.preview(pinnedBot);
+  else inspector.close();
+});
+// clicking a bot pins the inspector open; clicking it again unpins
+threatMap.onBotClick((i) => {
+  pinnedBot = pinnedBot === i ? null : i;
+  if (pinnedBot == null) inspector.close();
+  else inspector.preview(i);
+});
+syncBotStrip(); // seed the strip tiles before the first ws frame
+
+// t13 scrubber + inspector over the t12 renderer facade
+const scrubber = initScrubber({
+  els,
+  timeline,
+  threatMap,
+  gsap: window.gsap || null,
+  reduceMotion: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false,
+});
+const inspector = initNodeInspector({ els, timeline, threatMap });
+// ✕ also releases the pin so hover-out can't reopen the card
+els.inspectorClose.addEventListener("click", () => { pinnedBot = null; });
 
 // tab shell: only the visible tab repaints; going back to the command center
 // needs an explicit resize because echarts measured the panel while hidden
 initTabs(document);
 document.addEventListener("tabchange", (e) => {
   state.activeTab = e.detail.tab;
+  threatMap.setVisible(state.activeTab === "threat-map"); // only visible tab paints (Ticket 9)
+  scrubber.setVisible(state.activeTab === "threat-map");
   if (state.activeTab === "command-center") {
     state.chart && state.chart.resize();
     state.sparkConns && state.sparkConns.resize();
