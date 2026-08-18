@@ -140,6 +140,7 @@ uint64_t wall_now = now_ms();
 
         std::string algorithm_str = "token_bucket";
         nlohmann::json decisions = nlohmann::json::array();
+        nlohmann::json vip_stats = nlohmann::json::array();
         if (rate_limiter_) {
             algorithm_str = (rate_limiter_->algorithm() ==
                              RateLimiterConfig::Algorithm::kSlidingWindow)
@@ -151,6 +152,13 @@ uint64_t wall_now = now_ms();
                                      {"ts_ms", d.ts_ms},
                                      {"tokens", d.tokens},
                                      {"window_count", d.window_count}});
+            }
+            for (const VipStat& s : rate_limiter_->vip_stats()) {
+                vip_stats.push_back({{"vip", s.vip},
+                                     {"active_rps", s.active_rps},
+                                     {"sent", s.sent},
+                                     {"blocked", s.blocked},
+                                     {"worker_id", s.worker_id}});
             }
         }
 
@@ -169,7 +177,8 @@ uint64_t wall_now = now_ms();
                           stats_.active_connections.load(std::memory_order_relaxed)}}},
             {"recent_blocks", blocks},
             {"algorithm", algorithm_str},
-            {"decisions", decisions}};
+            {"decisions", decisions},
+            {"vip_stats", vip_stats}};
 
         std::string json_str = payload.dump();
         sendto(sock_fd_, json_str.data(), json_str.size(), 0,
