@@ -25,7 +25,7 @@ public:
     void stop();
 
 private:
-    void worker_main();
+    void worker_main(uint32_t worker_index);
 
     std::vector<std::thread> workers_;
     std::queue<int> tasks_;
